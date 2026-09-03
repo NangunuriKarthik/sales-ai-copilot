@@ -130,80 +130,200 @@ def load_semantic_model_yaml() -> str:
 SEMANTIC_YAML_TEXT = load_semantic_model_yaml()
 
 # ==============================================================================
-# 6. SEMANTIC-GROUNDED SQL GENERATOR (CORTEX ANALYST + LLM)
+# 6. SEMANTIC-GROUNDED SQL GENERATOR
 # ==============================================================================
-def execute_cortex_analyst_rest(prompt: str) -> Tuple[Optional[str], Optional[str]]:
-    """Attempts direct Cortex Analyst API call using the current Snowpark session token."""
-    account = st.secrets["snowflake"]["account"].replace("_", "-")
-    url = f"https://{account}.snowflakecomputing.com/api/v2/cortex/analyst/message"
-    
-    try:
-        raw_conn = session.connection
-        token = raw_conn._rest._token
-        headers = {
-            "Authorization": f'Snowflake Token="{token}"',
-            "Content-Type": "application/json",
-            "Accept": "application/json"
-        }
-        body = {
-            "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
-            "semantic_model_file": f"@{DATABASE}.{SCHEMA}.{STAGE}/{FILE}"
-        }
-        resp = requests.post(url, headers=headers, json=body, timeout=45)
-        if resp.status_code == 200:
-            data = resp.json()
-            items = data.get("message", {}).get("content", [])
-            text_out = ""
-            sql_out = None
-            for it in items:
-                if it.get("type") == "text":
-                    text_out += it.get("text", "") + "\n\n"
-                elif it.get("type") == "sql":
-                    sql_out = it.get("statement", "")
-            return text_out.strip(), sql_out
-    except Exception:
-        pass
-    return None, None
-
 def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
-    p = prompt.strip()
-    
-    # Conversational checks
-    if p.lower() in ["hi", "hello", "hey", "help", "who are you"]:
-        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, margins, customers, products, or channels.", None
+    p = prompt.lower().strip()
 
-    # Tier 1: Try Cortex Analyst REST API
-    analyst_text, analyst_sql = execute_cortex_analyst_rest(p)
-    if analyst_sql:
-        return analyst_text or f"Analysis for: **{p}**", analyst_sql
+    # 1. Greetings & Conversational
+    if p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
+        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, orders, customers, products, regions, or time trends!", None
 
-    # Tier 2: Grounded Semantic Model Prompt using Snowflake Cortex LLM
-    cortex_instruction = (
-        f"You are a Snowflake SQL generation engine. You must follow the provided SEMANTIC MODEL YAML strictly.\n"
-        f"Generate ONLY executable Snowflake SQL. Do not output markdown fences (no ```sql), no explanation, just raw SQL.\n\n"
-        f"=== SEMANTIC MODEL YAML ({FILE}) ===\n"
-        f"{SEMANTIC_YAML_TEXT[:18000]}\n"
-        f"====================================\n\n"
-        f"User Query: {p}\n"
-        f"SQL Query:"
+    if any(greet in p for greet in ["how are you", "what's up", "whats up"]):
+        return "I'm ready to help you analyze sales data! Ask any question about metrics, trends, or catalog performance.", None
+
+    # 2. Metric Aggregation Resolution
+    if any(k in p for k in ["average", "avg", "mean"]):
+        agg_func = "AVG"
+        alias = "AVG_SALES"
+        metric_desc = "average order sales"
+    elif any(k in p for k in ["count", "number of orders", "order volume", "how many orders"]):
+        agg_func = "COUNT(DISTINCT"
+        alias = "ORDER_COUNT"
+        metric_desc = "total order count"
+    elif any(k in p for k in ["min", "minimum", "lowest"]):
+        agg_func = "MIN"
+        alias = "MIN_SALES"
+        metric_desc = "minimum sales amount"
+    elif any(k in p for k in ["max", "maximum", "highest"]):
+        agg_func = "MAX"
+        alias = "MAX_SALES"
+        metric_desc = "maximum sales amount"
+    else:
+        agg_func = "SUM"
+        alias = "TOTAL_SALES"
+        metric_desc = "total sales revenue"
+
+    if agg_func == "COUNT(DISTINCT":
+        metric_expr = "COUNT(DISTINCT f.order_id)"
+        item_metric_expr = "COUNT(DISTINCT i.order_id)"
+    else:
+        metric_expr = f"ROUND({agg_func}(f.total_amount), 2)"
+        item_metric_expr = f"ROUND({agg_func}(i.line_total), 2)"
+
+    # 3. Dimension Resolution from Semantic Mart
+
+    # Region
+    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
+        sql = f"""
+SELECT 
+    c.region,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
+GROUP BY c.region
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Calculating {metric_desc} grouped by customer region.", sql
+
+    # Year / Annual Trend
+    if any(k in p for k in ["year", "yearly", "annual", "year wise", "year-wise"]):
+        sql = f"""
+SELECT 
+    d.year,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
+GROUP BY d.year
+ORDER BY d.year ASC
+        """.strip()
+        return f"Aggregating {metric_desc} by calendar year.", sql
+
+    # Month / Monthly Trend
+    if any(k in p for k in ["month", "monthly"]):
+        sql = f"""
+SELECT 
+    d.year,
+    d.month,
+    d.month_name,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
+GROUP BY d.year, d.month, d.month_name
+ORDER BY d.year, d.month ASC
+        """.strip()
+        return f"Aggregating {metric_desc} across monthly periods.", sql
+
+    # Customer Name / Top Customers
+    if "customer" in p and not any(k in p for k in ["region", "industry", "type", "tier"]):
+        sql = f"""
+SELECT 
+    c.customer_name,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
+GROUP BY c.customer_name
+ORDER BY {alias} DESC
+LIMIT 15
+        """.strip()
+        return f"Calculating {metric_desc} by customer name.", sql
+
+    # Product Name / Top Products
+    if "product" in p and not any(k in p for k in ["category", "brand"]):
+        sql = f"""
+SELECT 
+    p.product_name,
+    {item_metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM i
+JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
+GROUP BY p.product_name
+ORDER BY {alias} DESC
+LIMIT 10
+        """.strip()
+        return f"Ranking products by {metric_desc}.", sql
+
+    # Category
+    if any(k in p for k in ["category", "sub-category", "subcategory"]):
+        sql = f"""
+SELECT 
+    p.category,
+    SUM(i.quantity) AS UNITS_SOLD,
+    {item_metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM i
+JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
+GROUP BY p.category
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Evaluating {metric_desc} by product category.", sql
+
+    # Brand
+    if "brand" in p:
+        sql = f"""
+SELECT 
+    p.brand,
+    SUM(i.quantity) AS UNITS_SOLD,
+    {item_metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM i
+JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
+GROUP BY p.brand
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Evaluating {metric_desc} by brand.", sql
+
+    # Channel
+    if "channel" in p:
+        sql = f"""
+SELECT 
+    f.order_channel,
+    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+GROUP BY f.order_channel
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Analyzing {metric_desc} by sales channel.", sql
+
+    # Sales Rep
+    if any(k in p for k in ["rep", "salesperson", "representative"]):
+        sql = f"""
+SELECT 
+    r.sales_rep_name,
+    r.region AS REP_REGION,
+    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
+GROUP BY r.sales_rep_name, r.region
+ORDER BY {alias} DESC
+LIMIT 10
+        """.strip()
+        return f"Evaluating representative performance by {metric_desc}.", sql
+
+    # Overall Metric (Single total)
+    if any(k in p for k in ["total sales", "total revenue", "overall sales", "average sales", "avg sales"]):
+        sql = f"SELECT {metric_expr} AS {alias} FROM CORTEX.MART.FACT_SALES f"
+        return f"Calculating overall {metric_desc}.", sql
+
+    # 4. Snowflake Cortex LLM Fallback (for arbitrary questions)
+    schema_prompt = (
+        f"You are a Snowflake SQL expert for database CORTEX, schema MART.\n"
+        f"Tables: FACT_SALES, FACT_SALES_ITEM, DIM_CUSTOMER, DIM_PRODUCT, DIM_SALES_REP, DIM_DATE.\n"
+        f"Generate ONLY executable Snowflake SQL without markdown or backticks for: {prompt}"
     )
-
-    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+    for model in ['llama3.1-8b', 'mistral-7b']:
         try:
-            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out"
-            res = session.sql(query, params=[cortex_instruction]).collect()
+            res = session.sql(
+                f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out",
+                params=[schema_prompt]
+            ).collect()
             raw_sql = res[0]["SQL_OUT"].strip()
-            
-            # Clean markdown backticks
-            cleaned_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip()
-            cleaned_sql = re.sub(r"```$", "", cleaned_sql).strip()
-            
-            if cleaned_sql.lower().startswith("select") or cleaned_sql.lower().startswith("with"):
-                return f"Semantic SQL query generated for: **{p}**", cleaned_sql
+            clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
+            if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
+                return f"Analysis query for: **{prompt}**", clean_sql
         except Exception:
             continue
 
-    return "Unable to generate a query aligned with the semantic model. Please specify your metrics or dimensions.", None
+    return "", None
 
 # ==============================================================================
 # 7. ENLARGED RECTANGULAR RED DILYTICS LOGO
