@@ -1,0 +1,7 @@
+streamlit>=1.30.0
+snowflake-snowpark-python
+pandas
+pypdf
+openpyxl
+streamlit-authenticator==0.3.3
+pyyaml
