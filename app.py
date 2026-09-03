@@ -8,7 +8,9 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
+import requests
 import streamlit as st
+import yaml
 from snowflake.snowpark import Session
 
 try:
@@ -27,7 +29,15 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 2. BULLETPROOF NATIVE USER AUTHENTICATION
+# 2. SEMANTIC MODEL CONFIGURATION
+# ==============================================================================
+DATABASE = "CORTEX"
+SCHEMA = "MART"
+STAGE = "CORTEX_MODELS_STAGE"
+FILE = "sales_intelligence_model.yaml"
+
+# ==============================================================================
+# 3. USER AUTHENTICATION
 # ==============================================================================
 USER_DATABASE = {
     "admin": {
@@ -85,7 +95,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==============================================================================
-# 3. SECURE SNOWFLAKE CONNECTION (From st.secrets)
+# 4. SECURE SNOWFLAKE CONNECTION (st.secrets)
 # ==============================================================================
 @st.cache_resource
 def get_snowflake_session():
@@ -103,10 +113,103 @@ def get_snowflake_session():
 session = get_snowflake_session()
 
 # ==============================================================================
-# 4. ENLARGED RECTANGULAR RED DILYTICS LOGO
+# 5. SEMANTIC MODEL INGESTION (READ DIRECTLY FROM SNOWFLAKE STAGE)
+# ==============================================================================
+@st.cache_data(show_spinner=False)
+def load_semantic_model_yaml() -> str:
+    """Streams and caches the verified semantic model YAML from Snowflake Stage."""
+    stage_path = f"@{DATABASE}.{SCHEMA}.{STAGE}/{FILE}"
+    try:
+        stream = session.file.get_stream(stage_path)
+        content = stream.read().decode("utf-8")
+        return content
+    except Exception as exc:
+        # Fallback inline minimal semantic schema context if stage access times out
+        return f"# Stage read error: {str(exc)}\nDatabase: {DATABASE}, Schema: {SCHEMA}"
+
+SEMANTIC_YAML_TEXT = load_semantic_model_yaml()
+
+# ==============================================================================
+# 6. SEMANTIC-GROUNDED SQL GENERATOR (CORTEX ANALYST + LLM)
+# ==============================================================================
+def execute_cortex_analyst_rest(prompt: str) -> Tuple[Optional[str], Optional[str]]:
+    """Attempts direct Cortex Analyst API call using the current Snowpark session token."""
+    account = st.secrets["snowflake"]["account"].replace("_", "-")
+    url = f"https://{account}.snowflakecomputing.com/api/v2/cortex/analyst/message"
+    
+    try:
+        raw_conn = session.connection
+        token = raw_conn._rest._token
+        headers = {
+            "Authorization": f'Snowflake Token="{token}"',
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+        }
+        body = {
+            "messages": [{"role": "user", "content": [{"type": "text", "text": prompt}]}],
+            "semantic_model_file": f"@{DATABASE}.{SCHEMA}.{STAGE}/{FILE}"
+        }
+        resp = requests.post(url, headers=headers, json=body, timeout=45)
+        if resp.status_code == 200:
+            data = resp.json()
+            items = data.get("message", {}).get("content", [])
+            text_out = ""
+            sql_out = None
+            for it in items:
+                if it.get("type") == "text":
+                    text_out += it.get("text", "") + "\n\n"
+                elif it.get("type") == "sql":
+                    sql_out = it.get("statement", "")
+            return text_out.strip(), sql_out
+    except Exception:
+        pass
+    return None, None
+
+def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
+    p = prompt.strip()
+    
+    # Conversational checks
+    if p.lower() in ["hi", "hello", "hey", "help", "who are you"]:
+        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, margins, customers, products, or channels.", None
+
+    # Tier 1: Try Cortex Analyst REST API
+    analyst_text, analyst_sql = execute_cortex_analyst_rest(p)
+    if analyst_sql:
+        return analyst_text or f"Analysis for: **{p}**", analyst_sql
+
+    # Tier 2: Grounded Semantic Model Prompt using Snowflake Cortex LLM
+    cortex_instruction = (
+        f"You are a Snowflake SQL generation engine. You must follow the provided SEMANTIC MODEL YAML strictly.\n"
+        f"Generate ONLY executable Snowflake SQL. Do not output markdown fences (no ```sql), no explanation, just raw SQL.\n\n"
+        f"=== SEMANTIC MODEL YAML ({FILE}) ===\n"
+        f"{SEMANTIC_YAML_TEXT[:18000]}\n"
+        f"====================================\n\n"
+        f"User Query: {p}\n"
+        f"SQL Query:"
+    )
+
+    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+        try:
+            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out"
+            res = session.sql(query, params=[cortex_instruction]).collect()
+            raw_sql = res[0]["SQL_OUT"].strip()
+            
+            # Clean markdown backticks
+            cleaned_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip()
+            cleaned_sql = re.sub(r"```$", "", cleaned_sql).strip()
+            
+            if cleaned_sql.lower().startswith("select") or cleaned_sql.lower().startswith("with"):
+                return f"Semantic SQL query generated for: **{p}**", cleaned_sql
+        except Exception:
+            continue
+
+    return "Unable to generate a query aligned with the semantic model. Please specify your metrics or dimensions.", None
+
+# ==============================================================================
+# 7. ENLARGED RECTANGULAR RED DILYTICS LOGO
 # ==============================================================================
 DILYTICS_SVG = """
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 220" width="100%" height="100%">
+<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 600 220" width="100%" height="100%">
   <rect width="600" height="220" fill="#D50000" rx="18"/>
   <text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" 
         font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="94" 
@@ -116,7 +219,7 @@ DILYTICS_SVG = """
 DILYTICS_LOGO_B64 = base64.b64encode(DILYTICS_SVG.encode("utf-8")).decode("utf-8")
 
 # ==============================================================================
-# 5. CSS STYLING
+# 8. CSS STYLING
 # ==============================================================================
 st.markdown("""
 <style>
@@ -161,6 +264,16 @@ st.markdown("""
         font-weight: 600;
         margin-bottom: 14px;
     }
+    .yaml-pill {
+        display: inline-block;
+        background-color: #10b981;
+        color: #ffffff;
+        border-radius: 10px;
+        padding: 2px 10px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        margin-bottom: 10px;
+    }
     .chat-group-label {
         font-size: 0.7rem;
         font-weight: 700;
@@ -179,7 +292,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 6. DOCUMENT PARSERS & DOCUMENT QA
+# 9. DOCUMENT PARSER & ISOLATED CONTEXT QA
 # ==============================================================================
 def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
     try:
@@ -192,18 +305,18 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
             shared_strings = []
             if 'xl/sharedStrings.xml' in z.namelist():
                 ss_tree = ET.fromstring(z.read('xl/sharedStrings.xml'))
-                for si in ss_tree.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si'):
-                    t_nodes = si.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
+                for si in ss_tree.iterfind('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}si'):
+                    t_nodes = si.iterfind('.//{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}t')
                     shared_strings.append("".join([n.text or "" for n in t_nodes]))
 
             sheet_files = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet')]
             if sheet_files:
                 sheet_tree = ET.fromstring(z.read(sheet_files[0]))
                 rows_data = []
-                for row in sheet_tree.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row'):
+                for row in sheet_tree.iterfind('.//{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}row'):
                     row_cells = []
-                    for c in row.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
-                        val_node = c.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                    for c in row.iterfind('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}c'):
+                        val_node = c.find('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}v')
                         cell_val = val_node.text if val_node is not None else ""
                         if c.attrib.get('t') == 's' and cell_val.isdigit():
                             idx = int(cell_val)
@@ -232,11 +345,11 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
         except Exception:
             pass
 
-    raise ValueError("Unable to parse Excel file. Please ensure it is saved as an .xlsx or .csv.")
+    raise ValueError("Unable to parse Excel file format. Please upload standard .xlsx or .csv.")
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     if pypdf is None:
-        return "PDF text extraction requires the pypdf library."
+        return "PDF extraction requires pypdf."
     try:
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
         text = ""
@@ -253,7 +366,7 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             xml_content = z.read('word/document.xml')
             tree = ET.fromstring(xml_content)
-            namespaces = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
+            namespaces = {'w': '[http://schemas.openxmlformats.org/wordprocessingml/2006/main](http://schemas.openxmlformats.org/wordprocessingml/2006/main)'}
             paragraphs = []
             for p in tree.iterfind('.//w:p', namespaces):
                 texts = [node.text for node in p.iterfind('.//w:t', namespaces) if node.text]
@@ -268,15 +381,12 @@ def generate_comprehensive_summary(text: str, filename: str) -> str:
         return "The document contains no readable text."
     
     prompt = (
-        f"You are a senior business intelligence analyst. Provide a comprehensive, detailed, "
-        f"and structured summary of '{filename}'. Include key figures, topics, and takeaways:\n\n{text[:15000]}"
+        f"You are an expert document analyst. Provide a comprehensive, structured summary of '{filename}'. "
+        f"Include core themes, quantitative facts, operational insights, and key structural points:\n\n{text[:15000]}"
     )
     for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
         try:
-            res = session.sql(
-                f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary", 
-                params=[prompt]
-            ).collect()
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary", params=[prompt]).collect()
             ans = res[0]["SUMMARY"]
             if ans and len(ans.strip()) > 50:
                 return ans
@@ -284,21 +394,19 @@ def generate_comprehensive_summary(text: str, filename: str) -> str:
             continue
 
     paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
-    return "**Extractive Document Summary:**\n\n" + "\n\n".join([f"• {p}" for p in paragraphs[:5]])
+    return "**Extractive Summary:**\n\n" + "\n\n".join([f"• {p}" for p in paragraphs[:5]])
 
 def answer_from_document_context(question: str, doc_context: str, filename: str) -> str:
     prompt = (
-        f"You are answering questions about '{filename}'. Answer using ONLY the provided text. "
-        f"If the information is not in the text, reply strictly: 'There is no information regarding this in the uploaded document.'\n\n"
+        f"You are analyzing '{filename}'. Answer the user's question using ONLY the provided text below. "
+        f"If the information is not contained in the document, reply strictly with: "
+        f"'There is no information regarding this in the uploaded document.'\n\n"
         f"DOCUMENT:\n{doc_context[:15000]}\n\n"
         f"QUESTION: {question}\n\nANSWER:"
     )
     for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
         try:
-            res = session.sql(
-                f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", 
-                params=[prompt]
-            ).collect()
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", params=[prompt]).collect()
             return res[0]["ANSWER"]
         except Exception:
             continue
@@ -306,7 +414,7 @@ def answer_from_document_context(question: str, doc_context: str, filename: str)
     q_words = [w.lower() for w in re.findall(r'\w+', question) if len(w) > 3]
     matches = [line.strip() for line in doc_context.split('\n') if any(w in line.lower() for w in q_words) and len(line.strip()) > 20]
     if matches:
-        return "**Found relevant information:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:4]])
+        return "**Relevant information found in document:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:4]])
     return "There is no information regarding this in the uploaded document."
 
 def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional[pd.DataFrame]]:
@@ -318,7 +426,7 @@ def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional
     analysis = f"### 📊 Document Analysis: `{filename}`\n\n"
     analysis += f"**Dataset Overview:**\n"
     analysis += f"- **Dimensions:** {num_rows:,} rows × {num_cols} columns\n"
-    analysis += f"- **Missing Values:** {missing_vals:,}\n"
+    analysis += f"- **Missing Data Points:** {missing_vals:,}\n"
     analysis += f"- **Numeric Fields ({len(numeric_cols)}):** {', '.join(numeric_cols) if numeric_cols else 'None'}\n"
     analysis += f"- **Categorical Fields ({len(categorical_cols)}):** {', '.join(categorical_cols) if categorical_cols else 'None'}\n\n"
     
@@ -326,8 +434,7 @@ def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional
         analysis += "**Summary Statistics:**\n"
         for col in numeric_cols[:4]:
             analysis += f"- **{col}**: Total = `{df[col].sum():,.2f}`, Avg = `{df[col].mean():,.2f}`, Min = `{df[col].min():,.2f}`, Max = `{df[col].max():,.2f}`\n"
-    
-    analysis += "\n*You can explore the full dataset and interactive charts below.*"
+            
     return analysis, df
 
 def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
@@ -373,244 +480,22 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         )
         return explanation, None, extracted
         
-    else:
-        return f"Unsupported file type for `{filename}`. Please upload CSV, Excel, PDF, or Word documents.", None, None
+    return f"Unsupported file type for `{filename}`.", None, None
 
 # ==============================================================================
-# 7. DETERMINISTIC & CORTEX DUAL-TIER SQL GENERATOR
-# ==============================================================================
-def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
-    p = prompt.lower().strip()
-
-    # Conversational checks
-    if any(greet in p for greet in ["how are you", "how's it going", "what's up", "who are you"]):
-        return "I am your Sales AI Copilot. Ask any question regarding revenue metrics, customer orders, product sales, or time trends!", None
-    if p in ["hi", "hello", "hey", "help", "good morning", "good evening"]:
-        return "Hello! I am your Sales Intelligence Assistant. Ask any question about sales, products, reps, channels, or regions!", None
-
-    # 1. Determine Aggregation Function & Metric Alias
-    if any(k in p for k in ["average", "avg", "mean"]):
-        agg_func = "AVG"
-        alias = "AVG_SALES"
-        metric_label = "average order sales"
-    elif any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"]):
-        agg_func = "COUNT(DISTINCT"
-        alias = "ORDER_COUNT"
-        metric_label = "total order count"
-    elif any(k in p for k in ["minimum", "min", "lowest"]):
-        agg_func = "MIN"
-        alias = "MIN_SALES"
-        metric_label = "minimum sales amount"
-    elif any(k in p for k in ["maximum", "max", "highest"]):
-        agg_func = "MAX"
-        alias = "MAX_SALES"
-        metric_label = "maximum sales amount"
-    else:
-        agg_func = "SUM"
-        alias = "TOTAL_SALES"
-        metric_label = "total sales revenue"
-
-    # Construct the metric SQL expression
-    if agg_func == "COUNT(DISTINCT":
-        metric_expr = "COUNT(DISTINCT f.order_id)"
-        item_metric_expr = "COUNT(DISTINCT i.order_id)"
-    else:
-        metric_expr = f"ROUND({agg_func}(f.total_amount), 2)"
-        item_metric_expr = f"ROUND({agg_func}(i.line_total), 2)"
-
-    # 2. Match Dimensions & Build Deterministic Analytical SQL
-
-    # Dimension: Customer Region
-    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
-        sql = f"""
-SELECT 
-    c.region,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.region
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Calculating {metric_label} grouped by customer region.", sql
-
-    # Dimension: Year / Annual Trend
-    if any(k in p for k in ["year", "yearly", "annual", "year wise", "year-wise"]):
-        sql = f"""
-SELECT 
-    d.year,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-GROUP BY d.year
-ORDER BY d.year ASC
-        """.strip()
-        return f"Aggregating {metric_label} by year.", sql
-
-    # Dimension: Month / Monthly Trend
-    if any(k in p for k in ["month", "monthly", "month wise"]):
-        sql = f"""
-SELECT 
-    d.year,
-    d.month,
-    d.month_name,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-GROUP BY d.year, d.month, d.month_name
-ORDER BY d.year, d.month ASC
-        """.strip()
-        return f"Aggregating {metric_label} across monthly periods.", sql
-
-    # Dimension: Customer
-    if "customer" in p and not any(k in p for k in ["region", "industry", "type", "tier"]):
-        sql = f"""
-SELECT 
-    c.customer_name,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.customer_name
-ORDER BY {alias} DESC
-LIMIT 15
-        """.strip()
-        return f"Calculating {metric_label} by customer.", sql
-
-    # Dimension: Product / Top Products
-    if "product" in p and not any(k in p for k in ["category", "brand"]):
-        sql = f"""
-SELECT 
-    p.product_name,
-    {item_metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.product_name
-ORDER BY {alias} DESC
-LIMIT 10
-        """.strip()
-        return f"Ranking products by {metric_label}.", sql
-
-    # Dimension: Category / Sub-Category
-    if any(k in p for k in ["category", "sub-category", "subcategory"]):
-        sql = f"""
-SELECT 
-    p.category,
-    SUM(i.quantity) AS UNITS_SOLD,
-    {item_metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.category
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Evaluating {metric_label} across product categories.", sql
-
-    # Dimension: Brand
-    if "brand" in p:
-        sql = f"""
-SELECT 
-    p.brand,
-    SUM(i.quantity) AS UNITS_SOLD,
-    {item_metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.brand
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Evaluating {metric_label} by brand.", sql
-
-    # Dimension: Order Channel
-    if "channel" in p:
-        sql = f"""
-SELECT 
-    f.order_channel,
-    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-GROUP BY f.order_channel
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Analyzing sales performance across channels.", sql
-
-    # Dimension: Sales Rep Performance
-    if any(k in p for k in ["rep", "salesperson", "representative"]):
-        sql = f"""
-SELECT 
-    r.sales_rep_name,
-    r.region AS REP_REGION,
-    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
-GROUP BY r.sales_rep_name, r.region
-ORDER BY {alias} DESC
-LIMIT 10
-        """.strip()
-        return f"Evaluating sales representative performance.", sql
-
-    # Dimension: Customer Industry / Tier
-    if any(k in p for k in ["industry", "customer type", "tier", "enterprise", "smb"]):
-        sql = f"""
-SELECT 
-    c.customer_type,
-    c.industry,
-    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.customer_type, c.industry
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Analyzing {metric_label} by customer industry and tier.", sql
-
-    # Overall Metric (Single Value)
-    if any(k in p for k in ["total sales", "total revenue", "overall sales", "average sales", "avg sales", "order count"]):
-        sql = f"SELECT {metric_expr} AS {alias} FROM CORTEX.MART.FACT_SALES f"
-        return f"Calculating overall {metric_label}.", sql
-
-    # 3. Cortex LLM Fallback (for complex or unmapped queries)
-    schema_prompt = f"""
-You are a Snowflake SQL generator for a sales mart in CORTEX.MART.
-FACT_SALES (order_id, order_date, customer_id, sales_rep_id, order_status, order_channel, total_amount)
-FACT_SALES_ITEM (item_id, order_id, product_id, quantity, unit_price, line_total)
-DIM_CUSTOMER (customer_id, customer_name, customer_type, industry, region)
-DIM_PRODUCT (product_id, product_name, category, sub_category, brand)
-DIM_SALES_REP (sales_rep_id, sales_rep_name, region, quota)
-DIM_DATE (date_key, date, year, month, month_name, quarter, fiscal_year, fiscal_quarter)
-
-Return ONLY a Snowflake SQL query without markdown formatting or backticks for: {prompt}
-"""
-    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
-        try:
-            escaped_prompt = schema_prompt.replace("'", "\\'")
-            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', '{escaped_prompt}') AS sql_text"
-            result = session.sql(query).collect()
-            sql_output = result[0]["SQL_TEXT"].strip()
-            sql_output = re.sub(r"^```(sql)?", "", sql_output, flags=re.IGNORECASE).strip()
-            sql_output = re.sub(r"```$", "", sql_output).strip()
-            if sql_output.lower().startswith("select") or sql_output.lower().startswith("with"):
-                return f"Analysis query for: **{prompt}**", sql_output
-        except Exception:
-            continue
-
-    return "", None
-
-# ==============================================================================
-# 8. CHART RENDERER
+# 10. CHART RENDERER
 # ==============================================================================
 def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
     if len(df.columns) < 2:
-        st.info("Need at least 2 columns to render a chart.")
+        st.info("At least 2 columns required to render visualization.")
         return
     all_cols = list(df.columns)
     col1, col2, col3 = st.columns(3)
     
-    x_key = f"{key_prefix}_x" if key_prefix else "x_axis"
-    y_key = f"{key_prefix}_y" if key_prefix else "y_axis"
-    t_key = f"{key_prefix}_type" if key_prefix else "chart_type"
-    
-    x_col = col1.selectbox("Dimension (X-axis)", all_cols, index=0, key=x_key)
-    remaining_cols = [c for c in all_cols if c != x_col]
-    y_col = col2.selectbox("Metric (Y-axis)", remaining_cols, index=0 if remaining_cols else 0, key=y_key)
-    chart_type = col3.selectbox("Chart Type", ["Bar Chart", "Line Chart", "Area Chart", "Scatter Plot"], key=t_key)
+    x_col = col1.selectbox("Dimension (X-axis)", all_cols, index=0, key=f"{key_prefix}_x")
+    remaining = [c for c in all_cols if c != x_col]
+    y_col = col2.selectbox("Metric (Y-axis)", remaining, index=0 if remaining else 0, key=f"{key_prefix}_y")
+    chart_type = col3.selectbox("Chart Type", ["Bar Chart", "Line Chart", "Area Chart", "Scatter Plot"], key=f"{key_prefix}_t")
     
     chart_df = df.copy()
     if any(k in x_col.lower() for k in ["year", "quarter", "month", "day", "date"]):
@@ -626,26 +511,26 @@ def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
         elif chart_type == "Scatter Plot":
             st.scatter_chart(chart_df, x=x_col, y=y_col)
     except Exception as exc:
-        st.error(f"Chart creation error: {exc}")
+        st.error(f"Chart error: {exc}")
 
 # ==============================================================================
-# 9. ONBOARDING QUESTIONS SETUP
+# 11. ONBOARDING QUESTIONS SETUP
 # ==============================================================================
 SUGGESTED_QUESTIONS = [
-    {"icon": "💰", "label": "Total Sales", "question": "What is the total sales amount?",
-     "detail": "Returns the gross sales revenue across all completed and logged transactions."},
-    {"icon": "👥", "label": "Sales by Customer", "question": "What are total sales by customer?",
-     "detail": "Aggregates revenue per customer account to highlight high-value partnerships."},
-    {"icon": "📦", "label": "Top Products", "question": "What are the top 10 products by sales revenue?",
-     "detail": "Ranks individual catalog products by line-item sales volume and revenue."},
-    {"icon": "🌍", "label": "Sales by Region", "question": "What is the average sales by region?",
-     "detail": "Calculates average order revenue across customer geographic territories."},
-    {"icon": "📈", "label": "Yearly Sales", "question": "What is the year wise sales trend?",
-     "detail": "Evaluates total annual revenue across sequential calendar years."},
+    {"icon": "💰", "label": "Total Sales", "question": "What is the total sales revenue?",
+     "detail": "Calculates gross sales revenue from fact tables defined in the semantic model."},
+    {"icon": "👥", "label": "Sales by Customer", "question": "What are total sales by customer name?",
+     "detail": "Ranks customer accounts by sales revenue."},
+    {"icon": "📦", "label": "Top Products", "question": "What are the top 10 products by line total revenue?",
+     "detail": "Ranks individual catalog products by line-item sales volume."},
+    {"icon": "🌍", "label": "Avg Sales by Region", "question": "What is the average sales by customer region?",
+     "detail": "Evaluates average order value across customer geographic regions."},
+    {"icon": "📈", "label": "Yearly Sales Trend", "question": "Show year wise sales revenue",
+     "detail": "Evaluates annual sales totals across sequential calendar years."},
 ]
 
 # ==============================================================================
-# 10. SESSION STATE MANAGEMENT
+# 12. SESSION STATE MANAGEMENT
 # ==============================================================================
 if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = {}
@@ -670,7 +555,7 @@ logged_in_username = st.session_state.get("username", "admin")
 logged_in_name = st.session_state.get("display_name", "Admin User")
 
 # ==============================================================================
-# 11. SIDEBAR
+# 13. SIDEBAR
 # ==============================================================================
 with st.sidebar:
     st.markdown(
@@ -692,6 +577,13 @@ with st.sidebar:
     st.markdown(
         f'<div style="text-align:center;">'
         f'<span class="user-pill">👤 {logged_in_username} · {logged_in_name}</span>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f'<div style="text-align:center;">'
+        f'<span class="yaml-pill">🔗 Model: {FILE}</span>'
         f'</div>',
         unsafe_allow_html=True
     )
@@ -728,6 +620,7 @@ with st.sidebar:
             with st.spinner(f"Analyzing {uploaded_doc.name}..."):
                 analysis_text, extracted_df, raw_context = process_uploaded_document(uploaded_doc)
                 
+                # Context is strictly session-scoped
                 st.session_state.chat_sessions[current_id]["doc_context"] = raw_context
                 st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
                 
@@ -796,10 +689,10 @@ with st.sidebar:
         st.rerun()
 
 # ==============================================================================
-# 12. MAIN AREA
+# 14. MAIN AREA
 # ==============================================================================
 st.title("💬 Sales AI Copilot")
-st.caption("Ask questions in natural language to explore revenue metrics, customer segments, and sales performance.")
+st.caption(f"Semantic Intelligence grounded in `{FILE}` via Snowflake Cortex")
 
 with st.expander("💡 What can I ask this assistant?", expanded=False):
     col_a, col_b = st.columns(2)
@@ -809,7 +702,7 @@ with st.expander("💡 What can I ask this assistant?", expanded=False):
         * Track gross revenue, order volume, and average order values.
         * Analyze sales channels (*Web*, *Direct Sales*, *Partners*).
         * Compare quarterly and fiscal performance trends.
-        
+
         **👥 Customers & Accounts**
         * Breakdown sales by customer industry vertical (*Tech*, *Finance*, *Healthcare*).
         * Segment revenue by account tier (*Enterprise* vs. *SMB*).
@@ -821,13 +714,12 @@ with st.expander("💡 What can I ask this assistant?", expanded=False):
         * Identify top-selling products by units and net revenue.
         * Compare category, sub-category, and brand margins.
         * Monitor volume throughput and average selling prices.
-        
+
         **🏆 Sales Team & Territories**
         * Track revenue generated per Account Executive.
         * Compare territory quotas and managed order counts.
         * Evaluate rep performance across customer accounts.
         """)
-    st.info("💡 **Pro-Tip:** Type naturally (e.g., 'What is the average sales by region?' or 'What are the top 5 products?') or click any quick-prompt button above.")
 
 st.markdown("##### 💡 Verified Onboarding Questions from Semantic Model:")
 cols = st.columns(len(SUGGESTED_QUESTIONS))
@@ -846,7 +738,7 @@ for idx, msg in enumerate(messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg.get("sql"):
-            with st.expander("Generated SQL", expanded=False):
+            with st.expander("Generated Semantic SQL", expanded=False):
                 st.code(msg["sql"], language="sql")
         if msg.get("data") is not None and not msg["data"].empty:
             tab_data, tab_chart = st.tabs(["Data 📄", "Chart 📈"])
@@ -881,13 +773,13 @@ if user_prompt:
                 st.markdown(answer)
                 messages.append({"role": "assistant", "content": answer, "sql": None, "data": None})
         else:
-            with st.spinner("Analyzing question and generating SQL..."):
+            with st.spinner("Interpreting query against Semantic Model..."):
                 explanation, sql_query = generate_sql_from_prompt(user_prompt)
                 df = None
                 
                 if sql_query:
                     st.markdown(explanation)
-                    with st.expander("Generated SQL", expanded=False):
+                    with st.expander("Generated Semantic SQL", expanded=False):
                         st.code(sql_query, language="sql")
                     try:
                         df = session.sql(sql_query).to_pandas()
@@ -907,9 +799,8 @@ if user_prompt:
                     explanation = answer
                 else:
                     fallback_text = (
-                        "I am specialized strictly as a **Sales Domain Intelligence Copilot** for commercial revenue analytics, "
-                        "or I can answer questions about documents uploaded in this chat session.\n\n"
-                        "Please ask a sales question (e.g., 'average sales by region' or 'year wise sales') or upload a document in the sidebar!"
+                        "I could not formulate a semantic query for this question. "
+                        "Please verify the metric or dimension name, or ask about revenue, products, customers, or reps."
                     )
                     st.markdown(fallback_text)
                     explanation = fallback_text
