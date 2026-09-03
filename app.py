@@ -1,3 +1,5 @@
+import base64
+import difflib
 import io
 import json
 import re
@@ -9,6 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 import streamlit as st
+import yaml
 from snowflake.snowpark import Session
 
 try:
@@ -32,10 +35,10 @@ st.set_page_config(
 DATABASE = "CORTEX"
 SCHEMA = "MART"
 STAGE = "CORTEX_MODELS_STAGE"
-FILE = "sales_intelligence_model.yaml"
+FILE = "sales_intelligence_model_80_queries.yaml"
 
 # ==============================================================================
-# 3. BULLETPROOF USER AUTHENTICATION
+# 3. USER AUTHENTICATION
 # ==============================================================================
 USER_DATABASE = {
     "admin": {
@@ -93,7 +96,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==============================================================================
-# 4. SECURE SNOWFLAKE CONNECTION (From st.secrets)
+# 4. SECURE SNOWFLAKE CONNECTION
 # ==============================================================================
 @st.cache_resource
 def get_snowflake_session():
@@ -111,21 +114,162 @@ def get_snowflake_session():
 session = get_snowflake_session()
 
 # ==============================================================================
-# 5. SEMANTIC MODEL INGESTION (READ DIRECTLY FROM SNOWFLAKE STAGE)
+# 5. SEMANTIC YAML INGESTION & VERIFIED QUERY ENGINE
 # ==============================================================================
 @st.cache_data(show_spinner=False)
-def load_semantic_model_yaml() -> str:
+def load_and_parse_semantic_model() -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     stage_path = f"@{DATABASE}.{SCHEMA}.{STAGE}/{FILE}"
+    raw_yaml = ""
     try:
         stream = session.file.get_stream(stage_path)
-        return stream.read().decode("utf-8")
-    except Exception as exc:
-        return f"# Stage read error: {str(exc)}\nDatabase: {DATABASE}, Schema: {SCHEMA}"
+        raw_yaml = stream.read().decode("utf-8")
+    except Exception:
+        # Fallback to direct stage query if get_stream has permission barriers
+        try:
+            res = session.sql(f"SELECT $1 FROM {stage_path} (file_format => 'csv')").collect()
+            raw_yaml = "\n".join([r[0] for r in res if r[0] is not None])
+        except Exception:
+            pass
 
-SEMANTIC_YAML_TEXT = load_semantic_model_yaml()
+    parsed = {}
+    if raw_yaml:
+        try:
+            parsed = yaml.safe_load(raw_yaml) or {}
+        except Exception:
+            pass
+
+    verified_queries = parsed.get("verified_queries", [])
+    
+    # Process verified queries with fully-qualified Snowflake table names
+    processed_verified = []
+    for vq in verified_queries:
+        if not isinstance(vq, dict):
+            continue
+        q_text = vq.get("question", "")
+        raw_sql = vq.get("sql", "")
+        clean_sql = (
+            raw_sql.replace("__fact_sales_item", f"{DATABASE}.{SCHEMA}.FACT_SALES_ITEM")
+                   .replace("__fact_sales", f"{DATABASE}.{SCHEMA}.FACT_SALES")
+                   .replace("__dim_customer", f"{DATABASE}.{SCHEMA}.DIM_CUSTOMER")
+                   .replace("__dim_product", f"{DATABASE}.{SCHEMA}.DIM_PRODUCT")
+                   .replace("__dim_sales_rep", f"{DATABASE}.{SCHEMA}.DIM_SALES_REP")
+                   .replace("__dim_date", f"{DATABASE}.{SCHEMA}.DIM_DATE")
+                   .strip()
+        )
+        processed_verified.append({
+            "name": vq.get("name", ""),
+            "question": q_text,
+            "normalized_question": re.sub(r'[^\w\s]', '', q_text.lower()).strip(),
+            "sql": clean_sql
+        })
+
+    return parsed, processed_verified
+
+SEMANTIC_MODEL, VERIFIED_QUERIES = load_and_parse_semantic_model()
 
 # ==============================================================================
-# 6. ENLARGED RECTANGULAR RED DILYTICS LOGO (NATIVE HTML/CSS)
+# 6. SEMANTIC-GROUNDED SQL GENERATOR (VERIFIED CACHE + CORTEX LLM)
+# ==============================================================================
+def normalize_text(text: str) -> str:
+    return re.sub(r'[^\w\s]', '', text.lower()).strip()
+
+def match_verified_query(prompt: str) -> Optional[Tuple[str, str]]:
+    """Checks for an exact or high-confidence match in the verified queries catalog."""
+    norm_prompt = normalize_text(prompt)
+    if not norm_prompt or not VERIFIED_QUERIES:
+        return None
+
+    # 1. Exact or substring matching
+    for vq in VERIFIED_QUERIES:
+        vq_norm = vq["normalized_question"]
+        if norm_prompt == vq_norm or norm_prompt == normalize_text(vq["name"]):
+            return f"Verified Analysis: **{vq['question']}**", vq["sql"]
+
+    # 2. High-similarity fuzzy match (handles minor phrasing differences)
+    questions = [vq["normalized_question"] for vq in VERIFIED_QUERIES]
+    matches = difflib.get_close_matches(norm_prompt, questions, n=1, cutoff=0.72)
+    if matches:
+        matched_norm = matches[0]
+        for vq in VERIFIED_QUERIES:
+            if vq["normalized_question"] == matched_norm:
+                return f"Verified Analysis: **{vq['question']}**", vq["sql"]
+
+    return None
+
+def generate_sql_from_semantic_model(prompt: str) -> Tuple[str, Optional[str]]:
+    p = prompt.strip()
+    norm_p = normalize_text(p)
+
+    # Conversational checks
+    if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
+        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, orders, customers, products, regions, or time trends!", None
+
+    if any(greet in norm_p for greet in ["how are you", "what is up", "whats up"]):
+        return "I am ready to help you analyze sales data from the semantic data mart. What metric would you like to explore?", None
+
+    # Step 1: Match against YAML Verified Queries (100% Accuracy for curated queries)
+    matched = match_verified_query(p)
+    if matched:
+        return matched
+
+    # Step 2: Use Cortex LLM grounded in the complete semantic model
+    few_shot_examples = """
+Examples of valid SQL queries for this model:
+Q: What is total sales by customer region?
+A: SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC;
+
+Q: What are total sales in 2000?
+A: SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year;
+
+Q: What is average order sales by region?
+A: SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY average_sales DESC;
+
+Q: What are the top 10 products by sales revenue?
+A: SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10;
+"""
+
+    cortex_instruction = f"""
+You are a Snowflake SQL expert for database CORTEX, schema MART.
+Tables & Relationships:
+- FACT_SALES (order_id, customer_id, sales_rep_id, order_status, order_channel, order_date, total_amount, total_discount, total_tax, shipping_cost)
+- FACT_SALES_ITEM (order_item_id, order_id, product_id, quantity, unit_price, discount_amount, line_total)
+- DIM_CUSTOMER (customer_id, customer_name, customer_type, industry, region, status, state, city)
+- DIM_PRODUCT (product_id, product_name, category, sub_category, brand, unit_price, unit_cost)
+- DIM_SALES_REP (sales_rep_id, sales_rep_name, region, status)
+- DIM_DATE (date_key, year, quarter, month, month_name, day, is_weekend, fiscal_year, fiscal_quarter)
+
+Join Relationships:
+- FACT_SALES.customer_id = DIM_CUSTOMER.customer_id
+- FACT_SALES.sales_rep_id = DIM_SALES_REP.sales_rep_id
+- FACT_SALES.order_date = DIM_DATE.date_key
+- FACT_SALES_ITEM.order_id = FACT_SALES.order_id
+- FACT_SALES_ITEM.product_id = DIM_PRODUCT.product_id
+
+{few_shot_examples}
+
+Rules:
+1. Return ONLY an executable Snowflake SQL query. No markdown, no backticks, no explanation.
+2. If the user mentions a specific year (e.g. 2000, 2025, 2026), filter with WHERE d.year = <year>.
+3. If the user mentions 'average sales', use AVG(total_amount). For 'total sales', use SUM(total_amount).
+4. Use ROUND(..., 2) for numeric calculations.
+
+User Question: {p}
+SQL Query:
+"""
+    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+        try:
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out", params=[cortex_instruction]).collect()
+            raw_sql = res[0]["SQL_OUT"].strip()
+            clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
+            if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
+                return f"Semantic SQL generated for: **{p}**", clean_sql
+        except Exception:
+            continue
+
+    return "I could not formulate a semantic query for this question. Please specify the metrics or dimensions you wish to analyze.", None
+
+# ==============================================================================
+# 7. ENLARGED RECTANGULAR RED DILYTICS LOGO (NATIVE HTML/CSS)
 # ==============================================================================
 DILYTICS_LOGO_HTML = """
 <div style="
@@ -153,7 +297,7 @@ DILYTICS_LOGO_HTML = """
 """
 
 # ==============================================================================
-# 7. CSS STYLING
+# 8. CSS STYLING
 # ==============================================================================
 st.markdown("""
 <style>
@@ -212,7 +356,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 8. DOCUMENT PARSERS & DOCUMENT QA
+# 9. DOCUMENT PARSERS & DOCUMENT QA
 # ==============================================================================
 def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
     try:
@@ -225,18 +369,18 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
             shared_strings = []
             if 'xl/sharedStrings.xml' in z.namelist():
                 ss_tree = ET.fromstring(z.read('xl/sharedStrings.xml'))
-                for si in ss_tree.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si'):
-                    t_nodes = si.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
+                for si in ss_tree.iterfind('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}si'):
+                    t_nodes = si.iterfind('.//{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}t')
                     shared_strings.append("".join([n.text or "" for n in t_nodes]))
 
             sheet_files = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet')]
             if sheet_files:
                 sheet_tree = ET.fromstring(z.read(sheet_files[0]))
                 rows_data = []
-                for row in sheet_tree.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row'):
+                for row in sheet_tree.iterfind('.//{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}row'):
                     row_cells = []
-                    for c in row.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
-                        val_node = c.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                    for c in row.iterfind('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}c'):
+                        val_node = c.find('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}v')
                         cell_val = val_node.text if val_node is not None else ""
                         if c.attrib.get('t') == 's' and cell_val.isdigit():
                             idx = int(cell_val)
@@ -265,11 +409,11 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
         except Exception:
             pass
 
-    raise ValueError("Unable to parse Excel file. Please ensure it is saved as an .xlsx or .csv.")
+    raise ValueError("Unable to parse Excel file format.")
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     if pypdf is None:
-        return "PDF text extraction requires the pypdf library."
+        return "PDF text extraction requires pypdf."
     try:
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
         text = ""
@@ -288,17 +432,14 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
         with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
             xml_content = z.read('word/document.xml')
             tree = ET.fromstring(xml_content)
-            
             text_pieces = []
             for node in tree.iter():
                 if node.tag.split('}')[-1] == 't' and node.text:
                     text_pieces.append(node.text)
                 elif node.tag.split('}')[-1] in ('p', 'tr'):
                     text_pieces.append("\n")
-            
             full_text = "".join(text_pieces)
-            clean_text = re.sub(r'\n\s*\n+', '\n\n', full_text).strip()
-            return clean_text
+            return re.sub(r'\n\s*\n+', '\n\n', full_text).strip()
     except Exception as exc:
         return f"Error extracting Word document: {str(exc)}"
 
@@ -371,7 +512,6 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         return f"File `{filename}` is empty or could not be read.", None, None
 
     fname_lower = filename.lower()
-    
     if fname_lower.endswith(".csv"):
         try:
             df = pd.read_csv(io.BytesIO(file_bytes))
@@ -417,199 +557,6 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
     return f"Unsupported file type for `{filename}`.", None, None
 
 # ==============================================================================
-# 9. DETERMINISTIC & SEMANTIC-GROUNDED SQL GENERATOR
-# ==============================================================================
-def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
-    p = prompt.lower().strip()
-
-    # 1. Greetings & Conversational
-    if p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
-        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, orders, customers, products, regions, or time trends!", None
-
-    if any(greet in p for greet in ["how are you", "what's up", "whats up"]):
-        return "I'm ready to help you analyze sales data! Ask any question about metrics, trends, or catalog performance.", None
-
-    # 2. Metric Aggregation Resolution
-    if any(k in p for k in ["average", "avg", "mean"]):
-        agg_func = "AVG"
-        alias = "AVG_SALES"
-        metric_desc = "average order sales"
-    elif any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"]):
-        agg_func = "COUNT(DISTINCT"
-        alias = "ORDER_COUNT"
-        metric_desc = "total order count"
-    elif any(k in p for k in ["min", "minimum", "lowest"]):
-        agg_func = "MIN"
-        alias = "MIN_SALES"
-        metric_desc = "minimum sales amount"
-    elif any(k in p for k in ["max", "maximum", "highest"]):
-        agg_func = "MAX"
-        alias = "MAX_SALES"
-        metric_desc = "maximum sales amount"
-    else:
-        agg_func = "SUM"
-        alias = "TOTAL_SALES"
-        metric_desc = "total sales revenue"
-
-    if agg_func == "COUNT(DISTINCT":
-        metric_expr = "COUNT(DISTINCT f.order_id)"
-        item_metric_expr = "COUNT(DISTINCT i.order_id)"
-    else:
-        metric_expr = f"ROUND({agg_func}(f.total_amount), 2)"
-        item_metric_expr = f"ROUND({agg_func}(i.line_total), 2)"
-
-    # 3. Dimension Resolution against Semantic Mart
-
-    # Region
-    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
-        sql = f"""
-SELECT 
-    c.region,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.region
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Calculating {metric_desc} grouped by customer region.", sql
-
-    # Year / Annual Trend
-    if any(k in p for k in ["year", "yearly", "annual", "year wise", "year-wise"]):
-        sql = f"""
-SELECT 
-    d.year,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-GROUP BY d.year
-ORDER BY d.year ASC
-        """.strip()
-        return f"Aggregating {metric_desc} by calendar year.", sql
-
-    # Month / Monthly Trend
-    if any(k in p for k in ["month", "monthly"]):
-        sql = f"""
-SELECT 
-    d.year,
-    d.month,
-    d.month_name,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-GROUP BY d.year, d.month, d.month_name
-ORDER BY d.year, d.month ASC
-        """.strip()
-        return f"Aggregating {metric_desc} across monthly periods.", sql
-
-    # Customer Name / Top Customers
-    if "customer" in p and not any(k in p for k in ["region", "industry", "type", "tier"]):
-        sql = f"""
-SELECT 
-    c.customer_name,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.customer_name
-ORDER BY {alias} DESC
-LIMIT 15
-        """.strip()
-        return f"Calculating {metric_desc} by customer name.", sql
-
-    # Product Name / Top Products
-    if "product" in p and not any(k in p for k in ["category", "brand"]):
-        sql = f"""
-SELECT 
-    p.product_name,
-    {item_metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.product_name
-ORDER BY {alias} DESC
-LIMIT 10
-        """.strip()
-        return f"Ranking products by {metric_desc}.", sql
-
-    # Category
-    if any(k in p for k in ["category", "sub-category", "subcategory"]):
-        sql = f"""
-SELECT 
-    p.category,
-    SUM(i.quantity) AS UNITS_SOLD,
-    {item_metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.category
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Evaluating {metric_desc} by product category.", sql
-
-    # Brand
-    if "brand" in p:
-        sql = f"""
-SELECT 
-    p.brand,
-    SUM(i.quantity) AS UNITS_SOLD,
-    {item_metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.brand
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Evaluating {metric_desc} by brand.", sql
-
-    # Channel
-    if "channel" in p:
-        sql = f"""
-SELECT 
-    f.order_channel,
-    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-GROUP BY f.order_channel
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Analyzing {metric_desc} by sales channel.", sql
-
-    # Sales Rep
-    if any(k in p for k in ["rep", "salesperson", "representative"]):
-        sql = f"""
-SELECT 
-    r.sales_rep_name,
-    r.region AS REP_REGION,
-    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
-    {metric_expr} AS {alias}
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
-GROUP BY r.sales_rep_name, r.region
-ORDER BY {alias} DESC
-LIMIT 10
-        """.strip()
-        return f"Evaluating representative performance by {metric_desc}.", sql
-
-    # Overall Metric (Single Total)
-    if any(k in p for k in ["total sales", "total revenue", "overall sales", "average sales", "avg sales", "order count"]):
-        sql = f"SELECT {metric_expr} AS {alias} FROM CORTEX.MART.FACT_SALES f"
-        return f"Calculating overall {metric_desc}.", sql
-
-    # 4. Snowflake Cortex LLM Fallback (Using Semantic YAML Context)
-    schema_prompt = (
-        f"You are a Snowflake SQL generator for a sales data mart in CORTEX.MART.\n"
-        f"Semantic Model Overview:\n{SEMANTIC_YAML_TEXT[:6000]}\n\n"
-        f"Generate ONLY valid, executable Snowflake SQL without markdown formatting or backticks for: {prompt}"
-    )
-    for model in ['llama3.1-8b', 'mistral-7b']:
-        try:
-            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out", params=[schema_prompt]).collect()
-            raw_sql = res[0]["SQL_OUT"].strip()
-            clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
-            if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
-                return f"Semantic SQL query generated for: **{prompt}**", clean_sql
-        except Exception:
-            continue
-
-    return "", None
-
-# ==============================================================================
 # 10. CHART RENDERER
 # ==============================================================================
 def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
@@ -641,19 +588,19 @@ def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
         st.error(f"Chart error: {exc}")
 
 # ==============================================================================
-# 11. ONBOARDING QUESTIONS SETUP
+# 11. ONBOARDING QUESTIONS FROM SEMANTIC MODEL
 # ==============================================================================
 SUGGESTED_QUESTIONS = [
-    {"icon": "💰", "label": "Total Sales", "question": "What is the total sales revenue?",
+    {"icon": "💰", "label": "Total Sales", "question": "What is the total sales amount?",
      "detail": "Calculates gross sales revenue from fact tables defined in the semantic model."},
-    {"icon": "👥", "label": "Sales by Customer", "question": "What are total sales by customer?",
+    {"icon": "👥", "label": "Sales by Customer", "question": "What are the total sales by customer?",
      "detail": "Ranks customer accounts by sales revenue."},
-    {"icon": "📦", "label": "Top Products", "question": "What are the top 10 products by sales?",
+    {"icon": "📦", "label": "Top Products", "question": "What are the top products by sales?",
      "detail": "Ranks individual catalog products by line-item sales volume."},
-    {"icon": "🌍", "label": "Avg Sales by Region", "question": "What is the average sales by region?",
-     "detail": "Evaluates average order revenue across customer geographic regions."},
-    {"icon": "📈", "label": "Yearly Sales Trend", "question": "Show year wise sales",
-     "detail": "Evaluates annual sales totals across sequential calendar years."},
+    {"icon": "🌍", "label": "Sales by Region", "question": "What are total sales by customer region?",
+     "detail": "Evaluates sales revenue across customer geographic regions."},
+    {"icon": "📅", "label": "Sales in 2000", "question": "What were the total sales in 2000?",
+     "detail": "Filters and calculates total sales specifically for the year 2000."},
 ]
 
 # ==============================================================================
@@ -740,7 +687,7 @@ with st.sidebar:
             with st.spinner(f"Analyzing {uploaded_doc.name}..."):
                 analysis_text, extracted_df, raw_context = process_uploaded_document(uploaded_doc)
                 
-                # Scoped to current conversation only
+                # Context is strictly session-scoped
                 st.session_state.chat_sessions[current_id]["doc_context"] = raw_context
                 st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
                 
@@ -893,8 +840,8 @@ if user_prompt:
                 st.markdown(answer)
                 messages.append({"role": "assistant", "content": answer, "sql": None, "data": None})
         else:
-            with st.spinner("Analyzing question..."):
-                explanation, sql_query = generate_sql_from_prompt(user_prompt)
+            with st.spinner("Interpreting query against Semantic Model..."):
+                explanation, sql_query = generate_sql_from_semantic_model(user_prompt)
                 df = None
                 
                 if sql_query:
@@ -922,7 +869,7 @@ if user_prompt:
                 else:
                     fallback_text = (
                         "I could not formulate a semantic query for this question. "
-                        "Please ask about sales revenue, averages, orders, products, customers, reps, or regions."
+                        "Please ask about sales revenue, averages, products, customers, or reps."
                     )
                     st.markdown(fallback_text)
                     explanation = fallback_text
