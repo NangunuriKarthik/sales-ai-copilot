@@ -377,101 +377,221 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         return f"Unsupported file type for `{filename}`. Please upload CSV, Excel, PDF, or Word documents.", None, None
 
 # ==============================================================================
-# 7. SCHEMA-DRIVEN DYNAMIC CORTEX SQL GENERATOR
+# 7. DETERMINISTIC & CORTEX DUAL-TIER SQL GENERATOR
 # ==============================================================================
-SCHEMA_METADATA = """
-You are an expert Snowflake SQL generator for a commercial Sales Data Mart.
-Target Database: CORTEX, Schema: MART
-
-Available Tables & Columns:
-1. FACT_SALES
-   - order_id (VARCHAR/NUMBER, Primary Key)
-   - order_date (NUMBER, Foreign Key to DIM_DATE.date_key, format YYYYMMDD)
-   - customer_id (VARCHAR/NUMBER, Foreign Key to DIM_CUSTOMER.customer_id)
-   - sales_rep_id (VARCHAR/NUMBER, Foreign Key to DIM_SALES_REP.sales_rep_id)
-   - order_status (VARCHAR: 'Delivered', 'Pending', 'Confirmed', 'Returned', 'Cancelled')
-   - order_channel (VARCHAR: 'Online', 'Phone', 'Partner', 'Direct')
-   - total_amount (NUMBER/FLOAT, Gross sales value for the order)
-
-2. FACT_SALES_ITEM
-   - item_id (VARCHAR/NUMBER, Primary Key)
-   - order_id (VARCHAR/NUMBER, Foreign Key to FACT_SALES.order_id)
-   - product_id (VARCHAR/NUMBER, Foreign Key to DIM_PRODUCT.product_id)
-   - quantity (NUMBER, Units sold)
-   - unit_price (NUMBER/FLOAT)
-   - line_total (NUMBER/FLOAT, Total revenue for the line item)
-
-3. DIM_CUSTOMER
-   - customer_id (VARCHAR/NUMBER, Primary Key)
-   - customer_name (VARCHAR)
-   - customer_type (VARCHAR: 'Enterprise', 'SMB', 'Consumer')
-   - industry (VARCHAR: 'Tech', 'Finance', 'Healthcare', etc.)
-   - region (VARCHAR: 'North', 'South', 'East', 'West', 'Central')
-
-4. DIM_PRODUCT
-   - product_id (VARCHAR/NUMBER, Primary Key)
-   - product_name (VARCHAR)
-   - category (VARCHAR)
-   - sub_category (VARCHAR)
-   - brand (VARCHAR)
-
-5. DIM_SALES_REP
-   - sales_rep_id (VARCHAR/NUMBER, Primary Key)
-   - sales_rep_name (VARCHAR)
-   - region (VARCHAR)
-   - quota (NUMBER)
-
-6. DIM_DATE
-   - date_key (NUMBER, Primary Key, format YYYYMMDD)
-   - date (DATE)
-   - year (NUMBER)
-   - month (NUMBER)
-   - month_name (VARCHAR)
-   - quarter (NUMBER)
-   - fiscal_year (NUMBER)
-   - fiscal_quarter (NUMBER)
-
-CRITICAL SQL GENERATION INSTRUCTIONS:
-1. Return ONLY valid, executable Snowflake SQL.
-2. NO markdown formatting, NO backticks (```), NO explanation text.
-3. For 'average sales' or 'avg sales' use AVG(total_amount).
-4. For 'total sales' or 'revenue' use SUM(total_amount).
-5. For 'order volume' or 'number of orders' use COUNT(DISTINCT order_id).
-6. When grouping by Year, Month, or Quarter, JOIN DIM_DATE on `f.order_date = d.date_key`.
-7. When grouping by Customer Region, JOIN DIM_CUSTOMER on `f.customer_id = c.customer_id`.
-8. Round all aggregations to 2 decimals using ROUND(..., 2).
-9. Always assign explicit column aliases (e.g., TOTAL_SALES, AVG_SALES, ORDER_COUNT).
-10. Sort sensibly (e.g., chronologically for dates, or descending by metric for rankings).
-"""
-
 def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
-    p = prompt.strip()
-    
-    if p.lower() in ["hi", "hello", "hey", "help", "who are you"]:
-        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, averages, customers, products, channels, or time trends.", None
+    p = prompt.lower().strip()
 
-    prompt_instruction = (
-        f"{SCHEMA_METADATA}\n\n"
-        f"User Query: {p}\n"
-        f"Generate the exact Snowflake SQL query:"
-    )
+    # Conversational checks
+    if any(greet in p for greet in ["how are you", "how's it going", "what's up", "who are you"]):
+        return "I am your Sales AI Copilot. Ask any question regarding revenue metrics, customer orders, product sales, or time trends!", None
+    if p in ["hi", "hello", "hey", "help", "good morning", "good evening"]:
+        return "Hello! I am your Sales Intelligence Assistant. Ask any question about sales, products, reps, channels, or regions!", None
 
+    # 1. Determine Aggregation Function & Metric Alias
+    if any(k in p for k in ["average", "avg", "mean"]):
+        agg_func = "AVG"
+        alias = "AVG_SALES"
+        metric_label = "average order sales"
+    elif any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"]):
+        agg_func = "COUNT(DISTINCT"
+        alias = "ORDER_COUNT"
+        metric_label = "total order count"
+    elif any(k in p for k in ["minimum", "min", "lowest"]):
+        agg_func = "MIN"
+        alias = "MIN_SALES"
+        metric_label = "minimum sales amount"
+    elif any(k in p for k in ["maximum", "max", "highest"]):
+        agg_func = "MAX"
+        alias = "MAX_SALES"
+        metric_label = "maximum sales amount"
+    else:
+        agg_func = "SUM"
+        alias = "TOTAL_SALES"
+        metric_label = "total sales revenue"
+
+    # Construct the metric SQL expression
+    if agg_func == "COUNT(DISTINCT":
+        metric_expr = "COUNT(DISTINCT f.order_id)"
+        item_metric_expr = "COUNT(DISTINCT i.order_id)"
+    else:
+        metric_expr = f"ROUND({agg_func}(f.total_amount), 2)"
+        item_metric_expr = f"ROUND({agg_func}(i.line_total), 2)"
+
+    # 2. Match Dimensions & Build Deterministic Analytical SQL
+
+    # Dimension: Customer Region
+    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
+        sql = f"""
+SELECT 
+    c.region,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
+GROUP BY c.region
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Calculating {metric_label} grouped by customer region.", sql
+
+    # Dimension: Year / Annual Trend
+    if any(k in p for k in ["year", "yearly", "annual", "year wise", "year-wise"]):
+        sql = f"""
+SELECT 
+    d.year,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
+GROUP BY d.year
+ORDER BY d.year ASC
+        """.strip()
+        return f"Aggregating {metric_label} by year.", sql
+
+    # Dimension: Month / Monthly Trend
+    if any(k in p for k in ["month", "monthly", "month wise"]):
+        sql = f"""
+SELECT 
+    d.year,
+    d.month,
+    d.month_name,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
+GROUP BY d.year, d.month, d.month_name
+ORDER BY d.year, d.month ASC
+        """.strip()
+        return f"Aggregating {metric_label} across monthly periods.", sql
+
+    # Dimension: Customer
+    if "customer" in p and not any(k in p for k in ["region", "industry", "type", "tier"]):
+        sql = f"""
+SELECT 
+    c.customer_name,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
+GROUP BY c.customer_name
+ORDER BY {alias} DESC
+LIMIT 15
+        """.strip()
+        return f"Calculating {metric_label} by customer.", sql
+
+    # Dimension: Product / Top Products
+    if "product" in p and not any(k in p for k in ["category", "brand"]):
+        sql = f"""
+SELECT 
+    p.product_name,
+    {item_metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM i
+JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
+GROUP BY p.product_name
+ORDER BY {alias} DESC
+LIMIT 10
+        """.strip()
+        return f"Ranking products by {metric_label}.", sql
+
+    # Dimension: Category / Sub-Category
+    if any(k in p for k in ["category", "sub-category", "subcategory"]):
+        sql = f"""
+SELECT 
+    p.category,
+    SUM(i.quantity) AS UNITS_SOLD,
+    {item_metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM i
+JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
+GROUP BY p.category
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Evaluating {metric_label} across product categories.", sql
+
+    # Dimension: Brand
+    if "brand" in p:
+        sql = f"""
+SELECT 
+    p.brand,
+    SUM(i.quantity) AS UNITS_SOLD,
+    {item_metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM i
+JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
+GROUP BY p.brand
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Evaluating {metric_label} by brand.", sql
+
+    # Dimension: Order Channel
+    if "channel" in p:
+        sql = f"""
+SELECT 
+    f.order_channel,
+    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+GROUP BY f.order_channel
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Analyzing sales performance across channels.", sql
+
+    # Dimension: Sales Rep Performance
+    if any(k in p for k in ["rep", "salesperson", "representative"]):
+        sql = f"""
+SELECT 
+    r.sales_rep_name,
+    r.region AS REP_REGION,
+    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
+GROUP BY r.sales_rep_name, r.region
+ORDER BY {alias} DESC
+LIMIT 10
+        """.strip()
+        return f"Evaluating sales representative performance.", sql
+
+    # Dimension: Customer Industry / Tier
+    if any(k in p for k in ["industry", "customer type", "tier", "enterprise", "smb"]):
+        sql = f"""
+SELECT 
+    c.customer_type,
+    c.industry,
+    COUNT(DISTINCT f.order_id) AS ORDER_COUNT,
+    {metric_expr} AS {alias}
+FROM CORTEX.MART.FACT_SALES f
+JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
+GROUP BY c.customer_type, c.industry
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Analyzing {metric_label} by customer industry and tier.", sql
+
+    # Overall Metric (Single Value)
+    if any(k in p for k in ["total sales", "total revenue", "overall sales", "average sales", "avg sales", "order count"]):
+        sql = f"SELECT {metric_expr} AS {alias} FROM CORTEX.MART.FACT_SALES f"
+        return f"Calculating overall {metric_label}.", sql
+
+    # 3. Cortex LLM Fallback (for complex or unmapped queries)
+    schema_prompt = f"""
+You are a Snowflake SQL generator for a sales mart in CORTEX.MART.
+FACT_SALES (order_id, order_date, customer_id, sales_rep_id, order_status, order_channel, total_amount)
+FACT_SALES_ITEM (item_id, order_id, product_id, quantity, unit_price, line_total)
+DIM_CUSTOMER (customer_id, customer_name, customer_type, industry, region)
+DIM_PRODUCT (product_id, product_name, category, sub_category, brand)
+DIM_SALES_REP (sales_rep_id, sales_rep_name, region, quota)
+DIM_DATE (date_key, date, year, month, month_name, quarter, fiscal_year, fiscal_quarter)
+
+Return ONLY a Snowflake SQL query without markdown formatting or backticks for: {prompt}
+"""
     for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
         try:
-            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_text"
-            result = session.sql(query, params=[prompt_instruction]).collect()
+            escaped_prompt = schema_prompt.replace("'", "\\'")
+            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', '{escaped_prompt}') AS sql_text"
+            result = session.sql(query).collect()
             sql_output = result[0]["SQL_TEXT"].strip()
-            
-            # Remove any markdown formatting if present
             sql_output = re.sub(r"^```(sql)?", "", sql_output, flags=re.IGNORECASE).strip()
             sql_output = re.sub(r"```$", "", sql_output).strip()
-            
             if sql_output.lower().startswith("select") or sql_output.lower().startswith("with"):
-                return f"Analysis query for: **{p}**", sql_output
+                return f"Analysis query for: **{prompt}**", sql_output
         except Exception:
             continue
 
-    return "Unable to generate a valid SQL query for this question. Please rephrase or specify the business metric.", None
+    return "", None
 
 # ==============================================================================
 # 8. CHART RENDERER
@@ -689,7 +809,7 @@ with st.expander("💡 What can I ask this assistant?", expanded=False):
         * Track gross revenue, order volume, and average order values.
         * Analyze sales channels (*Web*, *Direct Sales*, *Partners*).
         * Compare quarterly and fiscal performance trends.
-
+        
         **👥 Customers & Accounts**
         * Breakdown sales by customer industry vertical (*Tech*, *Finance*, *Healthcare*).
         * Segment revenue by account tier (*Enterprise* vs. *SMB*).
@@ -701,7 +821,7 @@ with st.expander("💡 What can I ask this assistant?", expanded=False):
         * Identify top-selling products by units and net revenue.
         * Compare category, sub-category, and brand margins.
         * Monitor volume throughput and average selling prices.
-
+        
         **🏆 Sales Team & Territories**
         * Track revenue generated per Account Executive.
         * Compare territory quotas and managed order counts.
@@ -753,7 +873,6 @@ if user_prompt:
         doc_ctx = st.session_state.chat_sessions[current_id].get("doc_context")
         doc_fname = st.session_state.chat_sessions[current_id].get("doc_name")
         
-        # Check if user query is intended for the uploaded document
         is_doc_query = doc_ctx is not None and any(k in user_prompt.lower() for k in ["document", "file", "uploaded", "docx", "pdf", "sheet", "summary"])
         
         if is_doc_query:
@@ -783,7 +902,6 @@ if user_prompt:
                     except Exception as e:
                         st.error(f"SQL Execution Error: {str(e)}")
                 elif doc_ctx:
-                    # Fallback to document context if SQL schema did not match
                     answer = answer_from_document_context(user_prompt, doc_ctx, doc_fname)
                     st.markdown(answer)
                     explanation = answer
