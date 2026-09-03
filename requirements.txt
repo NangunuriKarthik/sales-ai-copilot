@@ -1,5 +1,6 @@
 streamlit>=1.30.0
 snowflake-snowpark-python
 pandas
+requests
 pypdf
 openpyxl
