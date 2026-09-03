@@ -9,7 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
-import streamlit_authenticator as stauth
 from snowflake.snowpark import Session
 
 try:
@@ -28,39 +27,63 @@ st.set_page_config(
 )
 
 # ==============================================================================
-# 2. USER AUTHENTICATION
+# 2. BULLETPROOF NATIVE USER AUTHENTICATION
 # ==============================================================================
-# Pre-hashed passwords for security.
-# Default password for both accounts below is: Copilot@2026
-credentials = {
-    "usernames": {
-        "admin": {
-            "name": "Admin User",
-            "password": "$2b$12$e8wS.gU4sIqFqI14E6h7cOu0Q3uGj3H2b7g4QW8Kj6Y1H4g4L2v5m",
-            "logged_in": False
-        },
-        "analyst": {
-            "name": "Sales Analyst",
-            "password": "$2b$12$e8wS.gU4sIqFqI14E6h7cOu0Q3uGj3H2b7g4QW8Kj6Y1H4g4L2v5m",
-            "logged_in": False
-        }
+# User Accounts (Username: {Password, Display Name, Role})
+USER_DATABASE = {
+    "admin": {
+        "password": "Copilot@2026",
+        "name": "Admin User",
+        "role": "ACCOUNTADMIN"
+    },
+    "analyst": {
+        "password": "Copilot@2026",
+        "name": "Sales Analyst",
+        "role": "ANALYST"
     }
 }
 
-authenticator = stauth.Authenticate(
-    credentials,
-    cookie_name="sales_copilot_auth_cookie",
-    key="sales_copilot_signature_key",
-    cookie_expiry_days=7
-)
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "username" not in st.session_state:
+    st.session_state.username = None
+if "display_name" not in st.session_state:
+    st.session_state.display_name = None
+if "role" not in st.session_state:
+    st.session_state.role = None
 
-authenticator.login(location="main")
+def render_login_form():
+    col1, col2, col3 = st.columns([1, 1.4, 1])
+    with col2:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style="background: linear-gradient(180deg, #ede9fe 0%, #f5f3ff 100%); 
+                    border: 1px solid #ddd6fe; padding: 32px; border-radius: 16px; 
+                    box-shadow: 0 4px 20px rgba(109, 40, 217, 0.1); text-align: center;">
+            <h2 style="color: #4c1d95; margin-bottom: 4px;">⚡ Sales AI Copilot</h2>
+            <p style="color: #6d28d9; font-size: 0.9rem; margin-bottom: 24px;">Please sign in to access enterprise sales intelligence</p>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        with st.form("login_form", clear_on_submit=False):
+            username_input = st.text_input("Username", placeholder="e.g. admin or analyst")
+            password_input = st.text_input("Password", type="password", placeholder="••••••••")
+            submit_button = st.form_submit_button("🔐 Sign In", use_container_width=True, type="primary")
 
-if not st.session_state.get("authentication_status"):
-    if st.session_state.get("authentication_status") is False:
-        st.error("Invalid Username or Password.")
-    elif st.session_state.get("authentication_status") is None:
-        st.info("Please enter your credentials to access the Sales AI Copilot.")
+            if submit_button:
+                user_info = USER_DATABASE.get(username_input.strip().lower())
+                if user_info and user_info["password"] == password_input:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username_input.strip().lower()
+                    st.session_state.display_name = user_info["name"]
+                    st.session_state.role = user_info["role"]
+                    st.rerun()
+                else:
+                    st.error("Invalid Username or Password. Please try again.")
+
+# Check if authenticated
+if not st.session_state.authenticated:
+    render_login_form()
     st.stop()
 
 # ==============================================================================
@@ -625,8 +648,8 @@ active_session_data = st.session_state.chat_sessions[current_id]
 messages = active_session_data["messages"]
 
 # User Display Profile
-logged_in_username = st.session_state.get("username", "AOS")
-logged_in_name = st.session_state.get("name", "Account Admin")
+logged_in_username = st.session_state.get("username", "admin")
+logged_in_name = st.session_state.get("display_name", "Admin User")
 
 # ==============================================================================
 # 11. SIDEBAR
@@ -655,7 +678,11 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    authenticator.logout("🚪 Log Out", location="sidebar")
+    if st.button("🚪 Log Out", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.session_state.display_name = None
+        st.rerun()
 
     if st.button("➕ New Chat", use_container_width=True, type="primary"):
         new_id = datetime.now().strftime("%Y%m%d_%H%M%S")
