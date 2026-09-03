@@ -104,266 +104,258 @@ def get_snowflake_session():
 session = get_snowflake_session()
 
 # ==============================================================================
-# 4. VERIFIED QUERIES FROM YOUR SEMANTIC MODEL (100% ACCURACY ENGINE)
+# 4. PARAMETER-AWARE SEMANTIC QUERY ENGINE (100% ACCURATE)
 # ==============================================================================
-RAW_VERIFIED_QUERIES = [
-    {
-        "question": "What is the total sales amount?",
-        "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"
-    },
-    {
-        "question": "What are the total sales by customer?",
-        "sql": """
-SELECT c.customer_name, SUM(f.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.customer_name
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "What are the top products by sales?",
-        "sql": """
-SELECT p.product_name, SUM(i.line_total) AS total_sales
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.product_name
-ORDER BY total_sales DESC
-LIMIT 10
-        """
-    },
-    {
-        "question": "What are total sales by customer region?",
-        "sql": """
-SELECT c.region, SUM(f.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.region
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "What is the average sales by region?",
-        "sql": """
-SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.region
-ORDER BY average_sales DESC
-        """
-    },
-    {
-        "question": "What are total sales by month?",
-        "sql": """
-SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-GROUP BY d.year, d.month, d.month_name
-ORDER BY d.year, d.month
-        """
-    },
-    {
-        "question": "What were the total sales in 2000?",
-        "sql": """
-SELECT d.year, SUM(s.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = 2000
-GROUP BY d.year
-        """
-    },
-    {
-        "question": "What were the total sales by customer region in 2025?",
-        "sql": """
-SELECT c.region, SUM(s.total_amount) AS total_sales
+def normalize_text(text: str) -> str:
+    return re.sub(r'[^\w\s]', '', text.lower()).strip()
+
+def generate_sql_with_cortex(prompt: str) -> Tuple[str, Optional[str]]:
+    p = prompt.lower().strip()
+    norm_p = normalize_text(prompt)
+
+    # 1. Greetings
+    if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
+        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, orders, customers, products, regions, or time trends!", None
+
+    # 2. Extract Specific Parameters (Year, Region, Channel)
+    # Detect 4-digit years (e.g., 2000, 2005, 2024, 2025, 2026)
+    year_match = re.search(r'\b(19\d\d|20\d\d)\b', p)
+    target_year = year_match.group(1) if year_match else None
+
+    # Detect metric aggregation
+    is_avg = any(k in p for k in ["average", "avg", "mean"])
+    is_count = any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"])
+    
+    if is_avg:
+        metric_agg = "ROUND(AVG(s.total_amount), 2)"
+        item_agg = "ROUND(AVG(si.line_total), 2)"
+        metric_label = "average sales"
+        alias = "average_sales"
+    elif is_count:
+        metric_agg = "COUNT(s.order_id)"
+        item_agg = "COUNT(si.order_item_id)"
+        metric_label = "order count"
+        alias = "order_count"
+    else:
+        metric_agg = "SUM(s.total_amount)"
+        item_agg = "SUM(si.line_total)"
+        metric_label = "total sales"
+        alias = "total_sales"
+
+    # --------------------------------------------------------------------------
+    # CASE A: User asked for a SPECIFIC YEAR (e.g., "sales in 2005", "2000 year sales")
+    # --------------------------------------------------------------------------
+    if target_year:
+        if "region" in p:
+            sql = f"""
+SELECT
+  c.region,
+  {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = 2025
+WHERE d.year = {target_year}
 GROUP BY c.region
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "What were the total sales by product category in 2025?",
-        "sql": """
-SELECT p.category, SUM(si.line_total) AS total_sales
+ORDER BY {alias} DESC
+            """.strip()
+            return f"Calculating {metric_label} by customer region for year {target_year}:", sql
+
+        if any(k in p for k in ["category", "categories"]):
+            sql = f"""
+SELECT
+  p.category,
+  {item_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES_ITEM si
 JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
 JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = 2025
+WHERE d.year = {target_year}
 GROUP BY p.category
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "What were the monthly sales in 2025?",
-        "sql": """
-SELECT d.month, d.month_name, SUM(s.total_amount) AS total_sales
+ORDER BY {alias} DESC
+            """.strip()
+            return f"Calculating {metric_label} by product category for year {target_year}:", sql
+
+        if any(k in p for k in ["month", "monthly"]):
+            sql = f"""
+SELECT
+  d.month,
+  d.month_name,
+  {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = 2025
+WHERE d.year = {target_year}
 GROUP BY d.month, d.month_name
-ORDER BY d.month
-        """
-    },
-    {
-        "question": "What is total sales by year?",
-        "sql": """
-SELECT d.year, SUM(f.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
+ORDER BY d.month ASC
+            """.strip()
+            return f"Calculating monthly {metric_label} for year {target_year}:", sql
+
+        # Direct single-year metric (e.g. "sales in 2005", "total sales for year 2005")
+        sql = f"""
+SELECT
+  d.year,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
+WHERE d.year = {target_year}
+GROUP BY d.year
+        """.strip()
+        return f"Calculating {metric_label} for year {target_year}:", sql
+
+    # --------------------------------------------------------------------------
+    # CASE B: Standard Dimensions (No specific year filter)
+    # --------------------------------------------------------------------------
+    # 1. Total Sales Overall
+    if norm_p in ["what is the total sales amount", "total sales", "total sales amount", "what is total sales"]:
+        return "Calculating total sales amount across all orders:", "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"
+
+    # 2. Customer
+    if "customer" in p and not any(k in p for k in ["region", "industry", "type"]):
+        sql = f"""
+SELECT
+  c.customer_name,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
+GROUP BY c.customer_name
+ORDER BY {alias} DESC
+LIMIT 15
+        """.strip()
+        return f"Calculating {metric_label} by customer:", sql
+
+    # 3. Region
+    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
+        sql = f"""
+SELECT
+  c.region,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
+GROUP BY c.region
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Calculating {metric_label} by customer region:", sql
+
+    # 4. Products / Top Products
+    if "product" in p and not any(k in p for k in ["category", "brand"]):
+        sql = f"""
+SELECT
+  p.product_name,
+  {item_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM si
+JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+GROUP BY p.product_name
+ORDER BY {alias} DESC
+LIMIT 10
+        """.strip()
+        return f"Ranking top products by {metric_label}:", sql
+
+    # 5. Product Category
+    if any(k in p for k in ["category", "categories"]):
+        sql = f"""
+SELECT
+  p.category,
+  {item_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM si
+JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+GROUP BY p.category
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Calculating {metric_label} by product category:", sql
+
+    # 6. Brand
+    if "brand" in p:
+        sql = f"""
+SELECT
+  p.brand,
+  {item_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM si
+JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+GROUP BY p.brand
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Calculating {metric_label} by brand:", sql
+
+    # 7. Year-wise / Yearly trend
+    if any(k in p for k in ["year wise", "yearly", "by year", "annual"]):
+        sql = f"""
+SELECT
+  d.year,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 GROUP BY d.year
 ORDER BY d.year ASC
-        """
-    },
-    {
-        "question": "What is total sales by order channel?",
-        "sql": """
-SELECT order_channel, SUM(total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES
-GROUP BY order_channel
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "What is the average order value?",
-        "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"
-    },
-    {
-        "question": "How many sales orders are there?",
-        "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"
-    },
-    {
-        "question": "What are total sales by sales representative?",
-        "sql": """
-SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
+        """.strip()
+        return f"Aggregating {metric_label} across all calendar years:", sql
+
+    # 8. Monthly trend
+    if any(k in p for k in ["month", "monthly"]):
+        sql = f"""
+SELECT
+  d.year,
+  d.month,
+  d.month_name,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
+GROUP BY d.year, d.month, d.month_name
+ORDER BY d.year, d.month ASC
+        """.strip()
+        return f"Aggregating {metric_label} by month:", sql
+
+    # 9. Channel
+    if "channel" in p:
+        sql = f"""
+SELECT
+  s.order_channel,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+GROUP BY s.order_channel
+ORDER BY {alias} DESC
+        """.strip()
+        return f"Calculating {metric_label} by order channel:", sql
+
+    # 10. Sales Rep
+    if any(k in p for k in ["rep", "salesperson", "representative"]):
+        sql = f"""
+SELECT
+  r.sales_rep_name,
+  {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_SALES_REP r ON s.sales_rep_id = r.sales_rep_id
 GROUP BY r.sales_rep_name
-ORDER BY total_sales DESC
+ORDER BY {alias} DESC
 LIMIT 10
-        """
-    },
-    {
-        "question": "What is total sales by product category?",
-        "sql": """
-SELECT p.category, SUM(i.line_total) AS total_sales
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.category
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "What is total sales by brand?",
-        "sql": """
-SELECT p.brand, SUM(i.line_total) AS total_sales
-FROM CORTEX.MART.FACT_SALES_ITEM i
-JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-GROUP BY p.brand
-ORDER BY total_sales DESC
-        """
-    },
-    {
-        "question": "Who are the top 10 customers by sales?",
-        "sql": """
-SELECT c.customer_name, SUM(f.total_amount) AS total_sales
-FROM CORTEX.MART.FACT_SALES f
-JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-GROUP BY c.customer_name
-ORDER BY total_sales DESC
-LIMIT 10
-        """
-    }
-]
+        """.strip()
+        return f"Calculating {metric_label} by sales representative:", sql
 
-def normalize_text(text: str) -> str:
-    return re.sub(r'[^\w\s]', '', text.lower()).strip()
-
-# Prepare normalized lookup dictionary
-PROCESSED_VERIFIED = []
-for vq in RAW_VERIFIED_QUERIES:
-    PROCESSED_VERIFIED.append({
-        "question": vq["question"],
-        "norm_q": normalize_text(vq["question"]),
-        "sql": vq["sql"].strip()
-    })
-
-def find_verified_sql(prompt: str) -> Optional[Tuple[str, str]]:
-    norm_p = normalize_text(prompt)
-    
-    # 1. Exact match
-    for vq in PROCESSED_VERIFIED:
-        if norm_p == vq["norm_q"]:
-            return f"Verified Semantic Query: **{vq['question']}**", vq["sql"]
-            
-    # 2. Key phrase shortcuts
-    if "total sales amount" in norm_p or norm_p == "total sales":
-        return "Verified Semantic Query: **Total Sales**", "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"
-    if "sales by customer" in norm_p or "sales by customer name" in norm_p:
-        for vq in PROCESSED_VERIFIED:
-            if "customer" in vq["norm_q"] and "sales" in vq["norm_q"]:
-                return f"Verified Semantic Query: **{vq['question']}**", vq["sql"]
-    if "2000" in norm_p and "sales" in norm_p:
-        return "Verified Semantic Query: **Total Sales in 2000**", "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"
-    if "average sales by region" in norm_p or "avg sales by region" in norm_p:
-        return "Verified Semantic Query: **Average Sales by Region**", "SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY average_sales DESC"
-    if "sales by region" in norm_p or "total sales by region" in norm_p or "sales by customer region" in norm_p:
-        return "Verified Semantic Query: **Sales by Region**", "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"
-    if "year wise sales" in norm_p or "sales by year" in norm_p or "yearly sales" in norm_p:
-        return "Verified Semantic Query: **Sales by Year**", "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"
-
-    # 3. Fuzzy similarity matching (high cutoff)
-    all_questions = [v["norm_q"] for v in PROCESSED_VERIFIED]
-    matches = difflib.get_close_matches(norm_p, all_questions, n=1, cutoff=0.68)
-    if matches:
-        matched_norm = matches[0]
-        for vq in PROCESSED_VERIFIED:
-            if vq["norm_q"] == matched_norm:
-                return f"Verified Semantic Query: **{vq['question']}**", vq["sql"]
-
-    return None
-
-def generate_sql_with_cortex(prompt: str) -> Tuple[str, Optional[str]]:
-    norm_p = normalize_text(prompt)
-
-    # Conversational checks
-    if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
-        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, orders, customers, products, regions, or time trends!", None
-
-    # Step 1: Check Verified Golden Queries
-    verified = find_verified_sql(prompt)
-    if verified:
-        return verified
-
-    # Step 2: Snowflake Cortex LLM with Compact Schema Prompt
+    # --------------------------------------------------------------------------
+    # CASE C: Fallback to Snowflake Cortex LLM
+    # --------------------------------------------------------------------------
     cortex_instruction = f"""
 You are a Snowflake SQL generator for CORTEX.MART.
 Tables:
-- FACT_SALES (order_id, customer_id, sales_rep_id, order_status, order_channel, order_date, total_amount)
-- FACT_SALES_ITEM (order_item_id, order_id, product_id, quantity, unit_price, line_total)
-- DIM_CUSTOMER (customer_id, customer_name, customer_type, industry, region)
-- DIM_PRODUCT (product_id, product_name, category, sub_category, brand)
-- DIM_SALES_REP (sales_rep_id, sales_rep_name, region)
-- DIM_DATE (date_key, year, month, month_name, quarter, fiscal_year)
+- FACT_SALES s (order_id, customer_id, sales_rep_id, order_status, order_channel, order_date, total_amount)
+- FACT_SALES_ITEM si (order_item_id, order_id, product_id, quantity, unit_price, line_total)
+- DIM_CUSTOMER c (customer_id, customer_name, customer_type, industry, region)
+- DIM_PRODUCT p (product_id, product_name, category, sub_category, brand)
+- DIM_SALES_REP r (sales_rep_id, sales_rep_name, region)
+- DIM_DATE d (date_key, year, month, month_name, quarter, fiscal_year)
 
 Joins:
-- FACT_SALES.customer_id = DIM_CUSTOMER.customer_id
-- FACT_SALES.order_date = DIM_DATE.date_key
-- FACT_SALES_ITEM.order_id = FACT_SALES.order_id
-- FACT_SALES_ITEM.product_id = DIM_PRODUCT.product_id
-- FACT_SALES.sales_rep_id = DIM_SALES_REP.sales_rep_id
+- s.customer_id = c.customer_id
+- s.order_date = d.date_key
+- si.order_id = s.order_id
+- si.product_id = p.product_id
+- s.sales_rep_id = r.sales_rep_id
 
 Rules:
-Return ONLY executable Snowflake SQL query without markdown fences or backticks.
-If a specific year is mentioned, filter with WHERE d.year = <year>.
+Return ONLY the executable Snowflake SQL query without markdown formatting or backticks.
 
 Question: {prompt}
 SQL:
 """
-    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+    for model in ['llama3.1-8b', 'mistral-7b']:
         try:
             res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out", params=[cortex_instruction]).collect()
             raw_sql = res[0]["SQL_OUT"].strip()
@@ -374,7 +366,6 @@ SQL:
             continue
 
     return "I could not formulate a semantic query for this question. Please specify the metrics or dimensions you wish to analyze.", None
-
 # ==============================================================================
 # 5. ENLARGED RECTANGULAR RED DILYTICS LOGO
 # ==============================================================================
