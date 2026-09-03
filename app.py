@@ -29,7 +29,6 @@ st.set_page_config(
 # ==============================================================================
 # 2. BULLETPROOF NATIVE USER AUTHENTICATION
 # ==============================================================================
-# User Accounts (Username: {Password, Display Name, Role})
 USER_DATABASE = {
     "admin": {
         "password": "Copilot@2026",
@@ -81,7 +80,6 @@ def render_login_form():
                 else:
                     st.error("Invalid Username or Password. Please try again.")
 
-# Check if authenticated
 if not st.session_state.authenticated:
     render_login_form()
     st.stop()
@@ -181,7 +179,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 6. DOCUMENT PARSERS & CORTEX LLM INTEGRATION
+# 6. DOCUMENT PARSERS & DOCUMENT QA
 # ==============================================================================
 def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
     try:
@@ -207,11 +205,9 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
                     for c in row.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
                         val_node = c.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
                         cell_val = val_node.text if val_node is not None else ""
-                        
                         if c.attrib.get('t') == 's' and cell_val.isdigit():
                             idx = int(cell_val)
                             cell_val = shared_strings[idx] if idx < len(shared_strings) else cell_val
-                        
                         row_cells.append(cell_val)
                     if any(row_cells):
                         rows_data.append(row_cells)
@@ -228,7 +224,7 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
     except Exception:
         pass
 
-    for delimiter in [',', '\t', ';', '|']:
+    for delimiter in [',', '\t', ';']:
         try:
             df = pd.read_csv(io.BytesIO(file_bytes), sep=delimiter, encoding='utf-8')
             if len(df.columns) > 1:
@@ -236,26 +232,11 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
         except Exception:
             pass
 
-    for delimiter in [',', '\t', ';']:
-        try:
-            df = pd.read_csv(io.BytesIO(file_bytes), sep=delimiter, encoding='latin1')
-            if len(df.columns) > 1:
-                return df
-        except Exception:
-            pass
-
-    try:
-        dfs = pd.read_html(io.BytesIO(file_bytes))
-        if dfs:
-            return dfs[0]
-    except Exception:
-        pass
-
-    raise ValueError("Unable to parse Excel file format. Please upload as standard .xlsx or .csv.")
+    raise ValueError("Unable to parse Excel file. Please ensure it is saved as an .xlsx or .csv.")
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     if pypdf is None:
-        return "PDF text extraction requires the `pypdf` package."
+        return "PDF text extraction requires the pypdf library."
     try:
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
         text = ""
@@ -265,7 +246,7 @@ def extract_text_from_pdf(file_bytes: bytes) -> str:
                 text += extracted + "\n"
         return text.strip()
     except Exception as exc:
-        return f"Error extracting PDF text: {str(exc)}"
+        return f"Error extracting PDF: {str(exc)}"
 
 def extract_text_from_docx(file_bytes: bytes) -> str:
     try:
@@ -282,65 +263,50 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     except Exception as exc:
         return f"Error extracting Word document: {str(exc)}"
 
-def fallback_extractive_summary(text: str, filename: str) -> str:
-    paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
-    key_points = paragraphs[:6] if len(paragraphs) >= 6 else paragraphs
-    
-    summary = f"**Summary of `{filename}`:**\n\n"
-    for pt in key_points:
-        clean_pt = re.sub(r'\s+', ' ', pt)
-        summary += f"• {clean_pt}\n\n"
-    return summary
-
 def generate_comprehensive_summary(text: str, filename: str) -> str:
     if not text.strip():
         return "The document contains no readable text."
     
     prompt = (
-        f"You are an expert data and business document analyst. Provide a comprehensive, detailed, "
-        f"and structured summary of the document titled '{filename}'. "
-        f"Include core themes, key statistics, operational facts, and structural sections. Do not truncate.\n\n"
-        f"DOCUMENT CONTENT:\n{text[:15000]}"
+        f"You are a senior business intelligence analyst. Provide a comprehensive, detailed, "
+        f"and structured summary of '{filename}'. Include key figures, topics, and takeaways:\n\n{text[:15000]}"
     )
-    
     for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
         try:
-            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary"
-            res = session.sql(query, params=[prompt]).collect()
+            res = session.sql(
+                f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary", 
+                params=[prompt]
+            ).collect()
             ans = res[0]["SUMMARY"]
             if ans and len(ans.strip()) > 50:
                 return ans
         except Exception:
             continue
-            
-    return fallback_extractive_summary(text, filename)
+
+    paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
+    return "**Extractive Document Summary:**\n\n" + "\n\n".join([f"• {p}" for p in paragraphs[:5]])
 
 def answer_from_document_context(question: str, doc_context: str, filename: str) -> str:
     prompt = (
-        f"You are analyzing the document '{filename}'. Answer the user's question using ONLY the provided text. "
-        f"If the information is not contained in the document, reply strictly with: "
-        f"'There is no information regarding this in the uploaded document.'\n\n"
-        f"DOCUMENT TEXT:\n{doc_context[:15000]}\n\n"
-        f"QUESTION: {question}\n\n"
-        f"ANSWER:"
+        f"You are answering questions about '{filename}'. Answer using ONLY the provided text. "
+        f"If the information is not in the text, reply strictly: 'There is no information regarding this in the uploaded document.'\n\n"
+        f"DOCUMENT:\n{doc_context[:15000]}\n\n"
+        f"QUESTION: {question}\n\nANSWER:"
     )
     for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
         try:
-            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer"
-            res = session.sql(query, params=[prompt]).collect()
+            res = session.sql(
+                f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", 
+                params=[prompt]
+            ).collect()
             return res[0]["ANSWER"]
         except Exception:
             continue
 
     q_words = [w.lower() for w in re.findall(r'\w+', question) if len(w) > 3]
-    matches = []
-    for line in doc_context.split('\n'):
-        if any(w in line.lower() for w in q_words) and len(line.strip()) > 20:
-            matches.append(line.strip())
-            if len(matches) >= 4:
-                break
+    matches = [line.strip() for line in doc_context.split('\n') if any(w in line.lower() for w in q_words) and len(line.strip()) > 20]
     if matches:
-        return "**Found relevant information in document:**\n\n" + "\n\n".join([f"• {m}" for m in matches])
+        return "**Found relevant information:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:4]])
     return "There is no information regarding this in the uploaded document."
 
 def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional[pd.DataFrame]]:
@@ -352,16 +318,16 @@ def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional
     analysis = f"### 📊 Document Analysis: `{filename}`\n\n"
     analysis += f"**Dataset Overview:**\n"
     analysis += f"- **Dimensions:** {num_rows:,} rows × {num_cols} columns\n"
-    analysis += f"- **Missing Data Points:** {missing_vals:,} empty cells\n"
+    analysis += f"- **Missing Values:** {missing_vals:,}\n"
     analysis += f"- **Numeric Fields ({len(numeric_cols)}):** {', '.join(numeric_cols) if numeric_cols else 'None'}\n"
     analysis += f"- **Categorical Fields ({len(categorical_cols)}):** {', '.join(categorical_cols) if categorical_cols else 'None'}\n\n"
     
     if numeric_cols:
-        analysis += "**Key Statistical Highlights:**\n"
+        analysis += "**Summary Statistics:**\n"
         for col in numeric_cols[:4]:
             analysis += f"- **{col}**: Total = `{df[col].sum():,.2f}`, Avg = `{df[col].mean():,.2f}`, Min = `{df[col].min():,.2f}`, Max = `{df[col].max():,.2f}`\n"
     
-    analysis += "\n*Explore the full dataset and interactive visualizations in the tabs below.*"
+    analysis += "\n*You can explore the full dataset and interactive charts below.*"
     return analysis, df
 
 def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
@@ -411,168 +377,101 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         return f"Unsupported file type for `{filename}`. Please upload CSV, Excel, PDF, or Word documents.", None, None
 
 # ==============================================================================
-# 7. RULE-BASED SQL GENERATOR (MART / YAML SEMANTIC SCHEMA)
+# 7. SCHEMA-DRIVEN DYNAMIC CORTEX SQL GENERATOR
 # ==============================================================================
+SCHEMA_METADATA = """
+You are an expert Snowflake SQL generator for a commercial Sales Data Mart.
+Target Database: CORTEX, Schema: MART
+
+Available Tables & Columns:
+1. FACT_SALES
+   - order_id (VARCHAR/NUMBER, Primary Key)
+   - order_date (NUMBER, Foreign Key to DIM_DATE.date_key, format YYYYMMDD)
+   - customer_id (VARCHAR/NUMBER, Foreign Key to DIM_CUSTOMER.customer_id)
+   - sales_rep_id (VARCHAR/NUMBER, Foreign Key to DIM_SALES_REP.sales_rep_id)
+   - order_status (VARCHAR: 'Delivered', 'Pending', 'Confirmed', 'Returned', 'Cancelled')
+   - order_channel (VARCHAR: 'Online', 'Phone', 'Partner', 'Direct')
+   - total_amount (NUMBER/FLOAT, Gross sales value for the order)
+
+2. FACT_SALES_ITEM
+   - item_id (VARCHAR/NUMBER, Primary Key)
+   - order_id (VARCHAR/NUMBER, Foreign Key to FACT_SALES.order_id)
+   - product_id (VARCHAR/NUMBER, Foreign Key to DIM_PRODUCT.product_id)
+   - quantity (NUMBER, Units sold)
+   - unit_price (NUMBER/FLOAT)
+   - line_total (NUMBER/FLOAT, Total revenue for the line item)
+
+3. DIM_CUSTOMER
+   - customer_id (VARCHAR/NUMBER, Primary Key)
+   - customer_name (VARCHAR)
+   - customer_type (VARCHAR: 'Enterprise', 'SMB', 'Consumer')
+   - industry (VARCHAR: 'Tech', 'Finance', 'Healthcare', etc.)
+   - region (VARCHAR: 'North', 'South', 'East', 'West', 'Central')
+
+4. DIM_PRODUCT
+   - product_id (VARCHAR/NUMBER, Primary Key)
+   - product_name (VARCHAR)
+   - category (VARCHAR)
+   - sub_category (VARCHAR)
+   - brand (VARCHAR)
+
+5. DIM_SALES_REP
+   - sales_rep_id (VARCHAR/NUMBER, Primary Key)
+   - sales_rep_name (VARCHAR)
+   - region (VARCHAR)
+   - quota (NUMBER)
+
+6. DIM_DATE
+   - date_key (NUMBER, Primary Key, format YYYYMMDD)
+   - date (DATE)
+   - year (NUMBER)
+   - month (NUMBER)
+   - month_name (VARCHAR)
+   - quarter (NUMBER)
+   - fiscal_year (NUMBER)
+   - fiscal_quarter (NUMBER)
+
+CRITICAL SQL GENERATION INSTRUCTIONS:
+1. Return ONLY valid, executable Snowflake SQL.
+2. NO markdown formatting, NO backticks (```), NO explanation text.
+3. For 'average sales' or 'avg sales' use AVG(total_amount).
+4. For 'total sales' or 'revenue' use SUM(total_amount).
+5. For 'order volume' or 'number of orders' use COUNT(DISTINCT order_id).
+6. When grouping by Year, Month, or Quarter, JOIN DIM_DATE on `f.order_date = d.date_key`.
+7. When grouping by Customer Region, JOIN DIM_CUSTOMER on `f.customer_id = c.customer_id`.
+8. Round all aggregations to 2 decimals using ROUND(..., 2).
+9. Always assign explicit column aliases (e.g., TOTAL_SALES, AVG_SALES, ORDER_COUNT).
+10. Sort sensibly (e.g., chronologically for dates, or descending by metric for rankings).
+"""
+
 def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
-    p = prompt.lower().strip()
-
-    if any(greet in p for greet in ["how are you", "how's it going", "what's up", "whats up"]):
-        return "I'm doing well, thank you! I am ready to help you analyze sales revenue, customers, products, reps, and order trends. What business metric would you like to explore?", None
+    p = prompt.strip()
     
-    if p in ["hi", "hello", "hey", "help", "good morning", "good evening", "good afternoon"]:
-        return "Hello! I am your Sales Intelligence Assistant powered by your semantic data model. Ask any question about sales, products, reps, channels, or regions!", None
+    if p.lower() in ["hi", "hello", "hey", "help", "who are you"]:
+        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, averages, customers, products, channels, or time trends.", None
 
-    if any(k in p for k in ["total sales", "total revenue", "revenue"]):
-        return "Calculating total gross sales across all transactions.", "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"
+    prompt_instruction = (
+        f"{SCHEMA_METADATA}\n\n"
+        f"User Query: {p}\n"
+        f"Generate the exact Snowflake SQL query:"
+    )
 
-    if "by customer" in p or "sales by customer" in p:
-        return "Aggregating total sales amount grouped by customer name.", """
-            SELECT
-              c.customer_name,
-              SUM(f.total_amount) AS total_sales
-            FROM CORTEX.MART.FACT_SALES f
-            JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-            GROUP BY c.customer_name
-            ORDER BY total_sales DESC
-        """.strip()
+    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+        try:
+            query = f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_text"
+            result = session.sql(query, params=[prompt_instruction]).collect()
+            sql_output = result[0]["SQL_TEXT"].strip()
+            
+            # Remove any markdown formatting if present
+            sql_output = re.sub(r"^```(sql)?", "", sql_output, flags=re.IGNORECASE).strip()
+            sql_output = re.sub(r"```$", "", sql_output).strip()
+            
+            if sql_output.lower().startswith("select") or sql_output.lower().startswith("with"):
+                return f"Analysis query for: **{p}**", sql_output
+        except Exception:
+            continue
 
-    if "top product" in p or "top 10 product" in p or "products by sales" in p or "top products" in p:
-        return "Ranking top product catalog items by line-item revenue.", """
-            SELECT
-              p.product_name,
-              SUM(i.line_total) AS total_sales
-            FROM CORTEX.MART.FACT_SALES_ITEM i
-            JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-            GROUP BY p.product_name
-            ORDER BY total_sales DESC
-            LIMIT 10
-        """.strip()
-
-    if "by customer region" in p or "by region" in p or "sales by region" in p:
-        return "Summarizing total sales revenue by customer sales region.", """
-            SELECT
-              c.region,
-              SUM(f.total_amount) AS total_sales
-            FROM CORTEX.MART.FACT_SALES f
-            JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-            GROUP BY c.region
-            ORDER BY total_sales DESC
-        """.strip()
-
-    if "month" in p or "monthly sales" in p or "monthly trend" in p:
-        return "Aggregating monthly sales volume and revenue.", """
-            SELECT
-              d.year,
-              d.month,
-              d.month_name,
-              SUM(f.total_amount) AS total_sales
-            FROM CORTEX.MART.FACT_SALES f
-            JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-            GROUP BY d.year, d.month, d.month_name
-            ORDER BY d.year, d.month
-        """.strip()
-
-    if "channel" in p:
-        return "Evaluating gross sales and percentage distribution by sales channel.", """
-            WITH channel_sales AS (
-              SELECT order_channel, SUM(total_amount) AS total_sales
-              FROM CORTEX.MART.FACT_SALES
-              GROUP BY order_channel
-            )
-            SELECT 
-              order_channel, 
-              total_sales,
-              ROUND(100 * total_sales / SUM(total_sales) OVER (), 2) AS sales_percentage
-            FROM channel_sales
-            ORDER BY total_sales DESC
-        """.strip()
-
-    if "category" in p or "sub_category" in p or "subcategory" in p:
-        return "Evaluating revenue contribution by product category.", """
-            SELECT 
-              p.category, 
-              SUM(i.quantity) AS units_sold,
-              SUM(i.line_total) AS total_sales
-            FROM CORTEX.MART.FACT_SALES_ITEM i
-            JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-            GROUP BY p.category
-            ORDER BY total_sales DESC
-        """.strip()
-
-    if "rep" in p or "salesperson" in p or "representative" in p:
-        return "Summarizing order volume and total revenue managed by sales reps.", """
-            SELECT 
-              r.sales_rep_name, 
-              r.region AS rep_region,
-              COUNT(f.order_id) AS order_count,
-              SUM(f.total_amount) AS total_sales
-            FROM CORTEX.MART.FACT_SALES f
-            JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
-            GROUP BY r.sales_rep_name, r.region
-            ORDER BY total_sales DESC
-            LIMIT 10
-        """.strip()
-
-    if any(k in p for k in ["industry", "customer type", "tier", "enterprise"]):
-        return "Analyzing customer sales across industry verticals and customer tiers.", """
-            SELECT 
-              c.customer_type, 
-              c.industry, 
-              COUNT(DISTINCT f.order_id) AS order_count,
-              SUM(f.total_amount) AS total_sales
-            FROM CORTEX.MART.FACT_SALES f
-            JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-            GROUP BY c.customer_type, c.industry
-            ORDER BY total_sales DESC
-        """.strip()
-
-    if "brand" in p:
-        return "Analyzing unit volume and line revenue by brand.", """
-            SELECT 
-              p.brand, 
-              SUM(i.quantity) AS units_sold,
-              SUM(i.line_total) AS total_sales
-            FROM CORTEX.MART.FACT_SALES_ITEM i
-            JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id
-            GROUP BY p.brand
-            ORDER BY total_sales DESC
-        """.strip()
-
-    if any(k in p for k in ["fiscal", "fy", "fq"]):
-        return "Tracking sales performance across fiscal periods.", """
-            SELECT 
-              d.fiscal_year, 
-              d.fiscal_quarter, 
-              SUM(f.total_amount) AS total_sales
-            FROM CORTEX.MART.FACT_SALES f
-            JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key
-            GROUP BY d.fiscal_year, d.fiscal_quarter
-            ORDER BY d.fiscal_year, d.fiscal_quarter
-        """.strip()
-
-    domain_keywords = [
-        "sales", "order", "revenue", "product", "customer", "rep", "date", 
-        "month", "year", "brand", "item", "discount", "tax", "shipping", 
-        "category", "price", "unit", "channel", "account", "industry", "region"
-    ]
-    if any(word in p for word in domain_keywords):
-        return "Displaying recent transactions with customer and representative context:", """
-            SELECT 
-                f.order_id,
-                f.order_date,
-                c.customer_name,
-                r.sales_rep_name,
-                f.order_status,
-                f.order_channel,
-                f.total_amount
-            FROM CORTEX.MART.FACT_SALES f
-            LEFT JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id
-            LEFT JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id
-            ORDER BY f.order_date DESC
-            LIMIT 20
-        """.strip()
-
-    return "", None
+    return "Unable to generate a valid SQL query for this question. Please rephrase or specify the business metric.", None
 
 # ==============================================================================
 # 8. CHART RENDERER
@@ -617,12 +516,12 @@ SUGGESTED_QUESTIONS = [
      "detail": "Returns the gross sales revenue across all completed and logged transactions."},
     {"icon": "👥", "label": "Sales by Customer", "question": "What are total sales by customer?",
      "detail": "Aggregates revenue per customer account to highlight high-value partnerships."},
-    {"icon": "📦", "label": "Top Products", "question": "What are the top products by sales?",
+    {"icon": "📦", "label": "Top Products", "question": "What are the top 10 products by sales revenue?",
      "detail": "Ranks individual catalog products by line-item sales volume and revenue."},
-    {"icon": "🌍", "label": "Sales by Region", "question": "What are total sales by customer region?",
-     "detail": "Summarizes commercial sales distributed across customer geographic territories."},
-    {"icon": "📈", "label": "Monthly Sales", "question": "Show monthly sales trend",
-     "detail": "Evaluates order volume and revenue generation across sequential calendar months."},
+    {"icon": "🌍", "label": "Sales by Region", "question": "What is the average sales by region?",
+     "detail": "Calculates average order revenue across customer geographic territories."},
+    {"icon": "📈", "label": "Yearly Sales", "question": "What is the year wise sales trend?",
+     "detail": "Evaluates total annual revenue across sequential calendar years."},
 ]
 
 # ==============================================================================
@@ -647,7 +546,6 @@ current_id = st.session_state.current_session_id
 active_session_data = st.session_state.chat_sessions[current_id]
 messages = active_session_data["messages"]
 
-# User Display Profile
 logged_in_username = st.session_state.get("username", "admin")
 logged_in_name = st.session_state.get("display_name", "Admin User")
 
@@ -809,7 +707,7 @@ with st.expander("💡 What can I ask this assistant?", expanded=False):
         * Compare territory quotas and managed order counts.
         * Evaluate rep performance across customer accounts.
         """)
-    st.info("💡 **Pro-Tip:** Type naturally (e.g., *'Who are our top 5 customers by revenue?'*) or click any quick-prompt button above.")
+    st.info("💡 **Pro-Tip:** Type naturally (e.g., 'What is the average sales by region?' or 'What are the top 5 products?') or click any quick-prompt button above.")
 
 st.markdown("##### 💡 Verified Onboarding Questions from Semantic Model:")
 cols = st.columns(len(SUGGESTED_QUESTIONS))
@@ -838,7 +736,7 @@ for idx, msg in enumerate(messages):
                 display_chart_tab(msg["data"], key_prefix=f"hist_{current_id}_{idx}")
 
 # Handle Chat Input
-user_prompt = st.chat_input("Ask a question about sales, products, reps, or your uploaded document...")
+user_prompt = st.chat_input("Ask a question about sales, products, reps, dates, or channels...")
 if st.session_state.pending_question:
     user_prompt = st.session_state.pending_question
     st.session_state.pending_question = None
@@ -855,45 +753,53 @@ if user_prompt:
         doc_ctx = st.session_state.chat_sessions[current_id].get("doc_context")
         doc_fname = st.session_state.chat_sessions[current_id].get("doc_name")
         
-        explanation, sql_query = generate_sql_from_prompt(user_prompt)
-        df = None
+        # Check if user query is intended for the uploaded document
+        is_doc_query = doc_ctx is not None and any(k in user_prompt.lower() for k in ["document", "file", "uploaded", "docx", "pdf", "sheet", "summary"])
         
-        if sql_query:
-            st.markdown(explanation)
-            with st.expander("Generated SQL", expanded=False):
-                st.code(sql_query, language="sql")
-            try:
-                df = session.sql(sql_query).to_pandas()
-                if df is not None and not df.empty:
-                    tab_data, tab_chart = st.tabs(["Data 📄", "Chart 📈"])
-                    with tab_data:
-                        st.dataframe(df, use_container_width=True)
-                    with tab_chart:
-                        display_chart_tab(df, key_prefix=f"live_{current_id}")
-                else:
-                    st.info("The query returned no data.")
-            except Exception as e:
-                st.error(f"SQL Execution Error: {str(e)}")
-                
-        elif doc_ctx:
-            with st.spinner(f"Searching in `{doc_fname}`..."):
+        if is_doc_query:
+            with st.spinner(f"Analyzing `{doc_fname}`..."):
                 answer = answer_from_document_context(user_prompt, doc_ctx, doc_fname)
                 st.markdown(answer)
-                explanation = answer
-                
+                messages.append({"role": "assistant", "content": answer, "sql": None, "data": None})
         else:
-            fallback_text = (
-                "I am specialized strictly as a **Sales Domain Intelligence Copilot** for commercial revenue analytics, "
-                "or I can answer questions about documents uploaded in this chat session.\n\n"
-                "Please ask a sales/catalog query, use the quick buttons above, or upload a document in the sidebar!"
-            )
-            st.markdown(fallback_text)
-            explanation = fallback_text
+            with st.spinner("Analyzing question and generating SQL..."):
+                explanation, sql_query = generate_sql_from_prompt(user_prompt)
+                df = None
+                
+                if sql_query:
+                    st.markdown(explanation)
+                    with st.expander("Generated SQL", expanded=False):
+                        st.code(sql_query, language="sql")
+                    try:
+                        df = session.sql(sql_query).to_pandas()
+                        if df is not None and not df.empty:
+                            tab_data, tab_chart = st.tabs(["Data 📄", "Chart 📈"])
+                            with tab_data:
+                                st.dataframe(df, use_container_width=True)
+                            with tab_chart:
+                                display_chart_tab(df, key_prefix=f"live_{current_id}")
+                        else:
+                            st.info("The query returned no data.")
+                    except Exception as e:
+                        st.error(f"SQL Execution Error: {str(e)}")
+                elif doc_ctx:
+                    # Fallback to document context if SQL schema did not match
+                    answer = answer_from_document_context(user_prompt, doc_ctx, doc_fname)
+                    st.markdown(answer)
+                    explanation = answer
+                else:
+                    fallback_text = (
+                        "I am specialized strictly as a **Sales Domain Intelligence Copilot** for commercial revenue analytics, "
+                        "or I can answer questions about documents uploaded in this chat session.\n\n"
+                        "Please ask a sales question (e.g., 'average sales by region' or 'year wise sales') or upload a document in the sidebar!"
+                    )
+                    st.markdown(fallback_text)
+                    explanation = fallback_text
 
-        messages.append({
-            "role": "assistant",
-            "content": explanation,
-            "sql": sql_query,
-            "data": df
-        })
+                messages.append({
+                    "role": "assistant",
+                    "content": explanation,
+                    "sql": sql_query,
+                    "data": df
+                })
         st.rerun()
