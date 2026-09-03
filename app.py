@@ -1,4 +1,3 @@
-import base64
 import io
 import json
 import re
@@ -10,7 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 import requests
 import streamlit as st
-import yaml
 from snowflake.snowpark import Session
 
 try:
@@ -37,7 +35,7 @@ STAGE = "CORTEX_MODELS_STAGE"
 FILE = "sales_intelligence_model.yaml"
 
 # ==============================================================================
-# 3. USER AUTHENTICATION
+# 3. BULLETPROOF USER AUTHENTICATION
 # ==============================================================================
 USER_DATABASE = {
     "admin": {
@@ -95,7 +93,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 # ==============================================================================
-# 4. SECURE SNOWFLAKE CONNECTION (st.secrets)
+# 4. SECURE SNOWFLAKE CONNECTION (From st.secrets)
 # ==============================================================================
 @st.cache_resource
 def get_snowflake_session():
@@ -117,20 +115,309 @@ session = get_snowflake_session()
 # ==============================================================================
 @st.cache_data(show_spinner=False)
 def load_semantic_model_yaml() -> str:
-    """Streams and caches the verified semantic model YAML from Snowflake Stage."""
     stage_path = f"@{DATABASE}.{SCHEMA}.{STAGE}/{FILE}"
     try:
         stream = session.file.get_stream(stage_path)
-        content = stream.read().decode("utf-8")
-        return content
+        return stream.read().decode("utf-8")
     except Exception as exc:
-        # Fallback inline minimal semantic schema context if stage access times out
         return f"# Stage read error: {str(exc)}\nDatabase: {DATABASE}, Schema: {SCHEMA}"
 
 SEMANTIC_YAML_TEXT = load_semantic_model_yaml()
 
 # ==============================================================================
-# 6. SEMANTIC-GROUNDED SQL GENERATOR
+# 6. ENLARGED RECTANGULAR RED DILYTICS LOGO (NATIVE HTML/CSS)
+# ==============================================================================
+DILYTICS_LOGO_HTML = """
+<div style="
+    background-color: #D50000;
+    border-radius: 14px;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    box-shadow: 0 6px 18px rgba(213, 0, 0, 0.28);
+    margin: 6px auto 18px auto;
+    width: 100%;
+    max-width: 250px;
+">
+    <span style="
+        color: #FFFFFF;
+        font-family: 'Arial Black', Arial, Helvetica, sans-serif;
+        font-size: 2rem;
+        font-weight: 900;
+        letter-spacing: 3px;
+        text-align: center;
+        line-height: 1;
+    ">DILYTICS</span>
+</div>
+"""
+
+# ==============================================================================
+# 7. CSS STYLING
+# ==============================================================================
+st.markdown("""
+<style>
+    section[data-testid="stSidebar"] {
+        background-color: #ede9fe !important;
+        border-right: 1px solid #ddd6fe !important;
+    }
+    .datetime-pill {
+        display: inline-block;
+        background-color: #6d28d9;
+        color: #f5f3ff;
+        border: 1px solid #7c3aed;
+        border-radius: 12px;
+        padding: 4px 14px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .user-pill {
+        display: inline-block;
+        background-color: #ffffff;
+        color: #4c1d95;
+        border: 1px solid #ddd6fe;
+        border-radius: 12px;
+        padding: 4px 14px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        margin-bottom: 8px;
+    }
+    .yaml-pill {
+        display: inline-block;
+        background-color: #047857;
+        color: #ecfdf5;
+        border: 1px solid #059669;
+        border-radius: 12px;
+        padding: 3px 12px;
+        font-size: 0.72rem;
+        font-weight: 600;
+        margin-bottom: 14px;
+    }
+    .chat-group-label {
+        font-size: 0.7rem;
+        font-weight: 700;
+        color: #7c3aed;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-top: 10px;
+        margin-bottom: 4px;
+    }
+    div[data-testid="stButton"] > button {
+        border-radius: 8px;
+        font-weight: 500;
+        transition: all 0.2s ease-in-out;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# 8. DOCUMENT PARSERS & DOCUMENT QA
+# ==============================================================================
+def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
+    try:
+        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+    except Exception:
+        pass
+
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            shared_strings = []
+            if 'xl/sharedStrings.xml' in z.namelist():
+                ss_tree = ET.fromstring(z.read('xl/sharedStrings.xml'))
+                for si in ss_tree.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si'):
+                    t_nodes = si.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
+                    shared_strings.append("".join([n.text or "" for n in t_nodes]))
+
+            sheet_files = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet')]
+            if sheet_files:
+                sheet_tree = ET.fromstring(z.read(sheet_files[0]))
+                rows_data = []
+                for row in sheet_tree.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row'):
+                    row_cells = []
+                    for c in row.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
+                        val_node = c.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                        cell_val = val_node.text if val_node is not None else ""
+                        if c.attrib.get('t') == 's' and cell_val.isdigit():
+                            idx = int(cell_val)
+                            cell_val = shared_strings[idx] if idx < len(shared_strings) else cell_val
+                        row_cells.append(cell_val)
+                    if any(row_cells):
+                        rows_data.append(row_cells)
+
+                if rows_data:
+                    headers = [h if str(h).strip() else f"Col_{i+1}" for i, h in enumerate(rows_data[0])]
+                    df = pd.DataFrame(rows_data[1:], columns=headers)
+                    for col in df.columns:
+                        try:
+                            df[col] = pd.to_numeric(df[col])
+                        except (ValueError, TypeError):
+                            pass
+                    return df
+    except Exception:
+        pass
+
+    for delimiter in [',', '\t', ';']:
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes), sep=delimiter, encoding='utf-8')
+            if len(df.columns) > 1:
+                return df
+        except Exception:
+            pass
+
+    raise ValueError("Unable to parse Excel file. Please ensure it is saved as an .xlsx or .csv.")
+
+def extract_text_from_pdf(file_bytes: bytes) -> str:
+    if pypdf is None:
+        return "PDF text extraction requires the pypdf library."
+    try:
+        reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+        text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n"
+        return text.strip()
+    except Exception as exc:
+        return f"Error extracting PDF: {str(exc)}"
+
+def extract_text_from_docx(file_bytes: bytes) -> str:
+    if not file_bytes:
+        return ""
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            xml_content = z.read('word/document.xml')
+            tree = ET.fromstring(xml_content)
+            
+            text_pieces = []
+            for node in tree.iter():
+                if node.tag.split('}')[-1] == 't' and node.text:
+                    text_pieces.append(node.text)
+                elif node.tag.split('}')[-1] in ('p', 'tr'):
+                    text_pieces.append("\n")
+            
+            full_text = "".join(text_pieces)
+            clean_text = re.sub(r'\n\s*\n+', '\n\n', full_text).strip()
+            return clean_text
+    except Exception as exc:
+        return f"Error extracting Word document: {str(exc)}"
+
+def generate_comprehensive_summary(text: str, filename: str) -> str:
+    if not text.strip():
+        return "The document contains no readable text."
+    
+    prompt = (
+        f"You are a senior business intelligence analyst. Provide a comprehensive, detailed, "
+        f"and structured summary of '{filename}'. Include key facts, figures, topics, and takeaways:\n\n{text[:15000]}"
+    )
+    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+        try:
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary", params=[prompt]).collect()
+            ans = res[0]["SUMMARY"]
+            if ans and len(ans.strip()) > 50:
+                return ans
+        except Exception:
+            continue
+
+    paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
+    return "**Extractive Document Summary:**\n\n" + "\n\n".join([f"• {p}" for p in paragraphs[:6]])
+
+def answer_from_document_context(question: str, doc_context: str, filename: str) -> str:
+    prompt = (
+        f"You are answering questions about '{filename}'. Answer using ONLY the provided text. "
+        f"If the information is not in the text, reply strictly: 'There is no information regarding this in the uploaded document.'\n\n"
+        f"DOCUMENT:\n{doc_context[:15000]}\n\n"
+        f"QUESTION: {question}\n\nANSWER:"
+    )
+    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
+        try:
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", params=[prompt]).collect()
+            return res[0]["ANSWER"]
+        except Exception:
+            continue
+
+    q_words = [w.lower() for w in re.findall(r'\w+', question) if len(w) > 3]
+    matches = [line.strip() for line in doc_context.split('\n') if any(w in line.lower() for w in q_words) and len(line.strip()) > 20]
+    if matches:
+        return "**Found relevant information:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:4]])
+    return "There is no information regarding this in the uploaded document."
+
+def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional[pd.DataFrame]]:
+    num_rows, num_cols = df.shape
+    missing_vals = df.isnull().sum().sum()
+    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
+    
+    analysis = f"### 📊 Document Analysis: `{filename}`\n\n"
+    analysis += f"**Dataset Overview:**\n"
+    analysis += f"- **Dimensions:** {num_rows:,} rows × {num_cols} columns\n"
+    analysis += f"- **Missing Values:** {missing_vals:,}\n"
+    analysis += f"- **Numeric Fields ({len(numeric_cols)}):** {', '.join(numeric_cols) if numeric_cols else 'None'}\n"
+    analysis += f"- **Categorical Fields ({len(categorical_cols)}):** {', '.join(categorical_cols) if categorical_cols else 'None'}\n\n"
+    
+    if numeric_cols:
+        analysis += "**Summary Statistics:**\n"
+        for col in numeric_cols[:4]:
+            analysis += f"- **{col}**: Total = `{df[col].sum():,.2f}`, Avg = `{df[col].mean():,.2f}`, Min = `{df[col].min():,.2f}`, Max = `{df[col].max():,.2f}`\n"
+            
+    return analysis, df
+
+def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
+    uploaded_file.seek(0)
+    filename = uploaded_file.name
+    file_bytes = uploaded_file.read()
+    
+    if not file_bytes:
+        return f"File `{filename}` is empty or could not be read.", None, None
+
+    fname_lower = filename.lower()
+    
+    if fname_lower.endswith(".csv"):
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes))
+        except Exception:
+            df = pd.read_csv(io.BytesIO(file_bytes), encoding='latin1')
+        summary, df_out = analyze_tabular_data(df, filename)
+        return summary, df_out, df.to_string(max_rows=100)
+        
+    elif fname_lower.endswith((".xlsx", ".xls")):
+        try:
+            df = extract_df_from_xlsx(file_bytes)
+            summary, df_out = analyze_tabular_data(df, filename)
+            return summary, df_out, df.to_string(max_rows=100)
+        except Exception as e:
+            return f"Error analyzing Excel file `{filename}`: {str(e)}", None, None
+        
+    elif fname_lower.endswith(".pdf"):
+        extracted = extract_text_from_pdf(file_bytes)
+        if not extracted or not extracted.strip():
+            return f"No readable text could be extracted from `{filename}`.", None, None
+        summary = generate_comprehensive_summary(extracted, filename)
+        explanation = (
+            f"### 📄 Document Analysis: `{filename}`\n\n"
+            f"- **File Type:** Adobe PDF Document\n"
+            f"- **Word Count:** ~{len(extracted.split()):,} words\n\n"
+            f"**Comprehensive Summary & Key Insights:**\n\n{summary}"
+        )
+        return explanation, None, extracted
+        
+    elif fname_lower.endswith((".docx", ".doc")):
+        extracted = extract_text_from_docx(file_bytes)
+        if not extracted or not extracted.strip():
+            return f"No readable text could be extracted from `{filename}`.", None, None
+        summary = generate_comprehensive_summary(extracted, filename)
+        explanation = (
+            f"### 📝 Word Document Analysis: `{filename}`\n\n"
+            f"- **File Type:** Microsoft Word Document\n"
+            f"- **Word Count:** ~{len(extracted.split()):,} words\n\n"
+            f"**Comprehensive Summary & Key Insights:**\n\n{summary}"
+        )
+        return explanation, None, extracted
+        
+    return f"Unsupported file type for `{filename}`.", None, None
+
+# ==============================================================================
+# 9. DETERMINISTIC & SEMANTIC-GROUNDED SQL GENERATOR
 # ==============================================================================
 def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
     p = prompt.lower().strip()
@@ -147,7 +434,7 @@ def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
         agg_func = "AVG"
         alias = "AVG_SALES"
         metric_desc = "average order sales"
-    elif any(k in p for k in ["count", "number of orders", "order volume", "how many orders"]):
+    elif any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"]):
         agg_func = "COUNT(DISTINCT"
         alias = "ORDER_COUNT"
         metric_desc = "total order count"
@@ -171,7 +458,7 @@ def generate_sql_from_prompt(prompt: str) -> Tuple[str, Optional[str]]:
         metric_expr = f"ROUND({agg_func}(f.total_amount), 2)"
         item_metric_expr = f"ROUND({agg_func}(i.line_total), 2)"
 
-    # 3. Dimension Resolution from Semantic Mart
+    # 3. Dimension Resolution against Semantic Mart
 
     # Region
     if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
@@ -299,315 +586,35 @@ LIMIT 10
         """.strip()
         return f"Evaluating representative performance by {metric_desc}.", sql
 
-    # Overall Metric (Single total)
-    if any(k in p for k in ["total sales", "total revenue", "overall sales", "average sales", "avg sales"]):
+    # Overall Metric (Single Total)
+    if any(k in p for k in ["total sales", "total revenue", "overall sales", "average sales", "avg sales", "order count"]):
         sql = f"SELECT {metric_expr} AS {alias} FROM CORTEX.MART.FACT_SALES f"
         return f"Calculating overall {metric_desc}.", sql
 
-    # 4. Snowflake Cortex LLM Fallback (for arbitrary questions)
+    # 4. Snowflake Cortex LLM Fallback (Using Semantic YAML Context)
     schema_prompt = (
-        f"You are a Snowflake SQL expert for database CORTEX, schema MART.\n"
-        f"Tables: FACT_SALES, FACT_SALES_ITEM, DIM_CUSTOMER, DIM_PRODUCT, DIM_SALES_REP, DIM_DATE.\n"
-        f"Generate ONLY executable Snowflake SQL without markdown or backticks for: {prompt}"
+        f"You are a Snowflake SQL generator for a sales data mart in CORTEX.MART.\n"
+        f"Semantic Model Overview:\n{SEMANTIC_YAML_TEXT[:6000]}\n\n"
+        f"Generate ONLY valid, executable Snowflake SQL without markdown formatting or backticks for: {prompt}"
     )
     for model in ['llama3.1-8b', 'mistral-7b']:
         try:
-            res = session.sql(
-                f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out",
-                params=[schema_prompt]
-            ).collect()
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS sql_out", params=[schema_prompt]).collect()
             raw_sql = res[0]["SQL_OUT"].strip()
             clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
             if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
-                return f"Analysis query for: **{prompt}**", clean_sql
+                return f"Semantic SQL query generated for: **{prompt}**", clean_sql
         except Exception:
             continue
 
     return "", None
 
 # ==============================================================================
-# 7. ENLARGED RECTANGULAR RED DILYTICS LOGO
-# ==============================================================================
-DILYTICS_SVG = """
-<svg xmlns="[http://www.w3.org/2000/svg](http://www.w3.org/2000/svg)" viewBox="0 0 600 220" width="100%" height="100%">
-  <rect width="600" height="220" fill="#D50000" rx="18"/>
-  <text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" 
-        font-family="Arial, Helvetica, sans-serif" font-weight="900" font-size="94" 
-        fill="#FFFFFF" letter-spacing="4">DILYTICS</text>
-</svg>
-"""
-DILYTICS_LOGO_B64 = base64.b64encode(DILYTICS_SVG.encode("utf-8")).decode("utf-8")
-
-# ==============================================================================
-# 8. CSS STYLING
-# ==============================================================================
-st.markdown("""
-<style>
-    section[data-testid="stSidebar"] {
-        background-color: #ede9fe !important;
-        border-right: 1px solid #ddd6fe !important;
-    }
-    .logo-container {
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        margin-top: 6px;
-        margin-bottom: 18px;
-        width: 100%;
-    }
-    .logo-container img {
-        width: 100%;
-        max-width: 250px;
-        height: auto;
-        border-radius: 12px;
-        box-shadow: 0 6px 18px rgba(213, 0, 0, 0.28);
-    }
-    .datetime-pill {
-        display: inline-block;
-        background-color: #6d28d9;
-        color: #f5f3ff;
-        border: 1px solid #7c3aed;
-        border-radius: 12px;
-        padding: 4px 14px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin-bottom: 6px;
-    }
-    .user-pill {
-        display: inline-block;
-        background-color: #ffffff;
-        color: #4c1d95;
-        border: 1px solid #ddd6fe;
-        border-radius: 12px;
-        padding: 4px 14px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin-bottom: 14px;
-    }
-    .yaml-pill {
-        display: inline-block;
-        background-color: #10b981;
-        color: #ffffff;
-        border-radius: 10px;
-        padding: 2px 10px;
-        font-size: 0.72rem;
-        font-weight: 600;
-        margin-bottom: 10px;
-    }
-    .chat-group-label {
-        font-size: 0.7rem;
-        font-weight: 700;
-        color: #7c3aed;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-top: 10px;
-        margin-bottom: 4px;
-    }
-    div[data-testid="stButton"] > button {
-        border-radius: 8px;
-        font-weight: 500;
-        transition: all 0.2s ease-in-out;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ==============================================================================
-# 9. DOCUMENT PARSER & ISOLATED CONTEXT QA
-# ==============================================================================
-def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
-    try:
-        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
-    except Exception:
-        pass
-
-    try:
-        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            shared_strings = []
-            if 'xl/sharedStrings.xml' in z.namelist():
-                ss_tree = ET.fromstring(z.read('xl/sharedStrings.xml'))
-                for si in ss_tree.iterfind('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}si'):
-                    t_nodes = si.iterfind('.//{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}t')
-                    shared_strings.append("".join([n.text or "" for n in t_nodes]))
-
-            sheet_files = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet')]
-            if sheet_files:
-                sheet_tree = ET.fromstring(z.read(sheet_files[0]))
-                rows_data = []
-                for row in sheet_tree.iterfind('.//{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}row'):
-                    row_cells = []
-                    for c in row.iterfind('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}c'):
-                        val_node = c.find('{[http://schemas.openxmlformats.org/spreadsheetml/2006/main](http://schemas.openxmlformats.org/spreadsheetml/2006/main)}v')
-                        cell_val = val_node.text if val_node is not None else ""
-                        if c.attrib.get('t') == 's' and cell_val.isdigit():
-                            idx = int(cell_val)
-                            cell_val = shared_strings[idx] if idx < len(shared_strings) else cell_val
-                        row_cells.append(cell_val)
-                    if any(row_cells):
-                        rows_data.append(row_cells)
-
-                if rows_data:
-                    headers = [h if str(h).strip() else f"Col_{i+1}" for i, h in enumerate(rows_data[0])]
-                    df = pd.DataFrame(rows_data[1:], columns=headers)
-                    for col in df.columns:
-                        try:
-                            df[col] = pd.to_numeric(df[col])
-                        except (ValueError, TypeError):
-                            pass
-                    return df
-    except Exception:
-        pass
-
-    for delimiter in [',', '\t', ';']:
-        try:
-            df = pd.read_csv(io.BytesIO(file_bytes), sep=delimiter, encoding='utf-8')
-            if len(df.columns) > 1:
-                return df
-        except Exception:
-            pass
-
-    raise ValueError("Unable to parse Excel file format. Please upload standard .xlsx or .csv.")
-
-def extract_text_from_pdf(file_bytes: bytes) -> str:
-    if pypdf is None:
-        return "PDF extraction requires pypdf."
-    try:
-        reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-        text = ""
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-        return text.strip()
-    except Exception as exc:
-        return f"Error extracting PDF: {str(exc)}"
-
-def extract_text_from_docx(file_bytes: bytes) -> str:
-    try:
-        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
-            xml_content = z.read('word/document.xml')
-            tree = ET.fromstring(xml_content)
-            namespaces = {'w': '[http://schemas.openxmlformats.org/wordprocessingml/2006/main](http://schemas.openxmlformats.org/wordprocessingml/2006/main)'}
-            paragraphs = []
-            for p in tree.iterfind('.//w:p', namespaces):
-                texts = [node.text for node in p.iterfind('.//w:t', namespaces) if node.text]
-                if texts:
-                    paragraphs.append("".join(texts))
-            return "\n\n".join(paragraphs).strip()
-    except Exception as exc:
-        return f"Error extracting Word document: {str(exc)}"
-
-def generate_comprehensive_summary(text: str, filename: str) -> str:
-    if not text.strip():
-        return "The document contains no readable text."
-    
-    prompt = (
-        f"You are an expert document analyst. Provide a comprehensive, structured summary of '{filename}'. "
-        f"Include core themes, quantitative facts, operational insights, and key structural points:\n\n{text[:15000]}"
-    )
-    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
-        try:
-            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary", params=[prompt]).collect()
-            ans = res[0]["SUMMARY"]
-            if ans and len(ans.strip()) > 50:
-                return ans
-        except Exception:
-            continue
-
-    paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
-    return "**Extractive Summary:**\n\n" + "\n\n".join([f"• {p}" for p in paragraphs[:5]])
-
-def answer_from_document_context(question: str, doc_context: str, filename: str) -> str:
-    prompt = (
-        f"You are analyzing '{filename}'. Answer the user's question using ONLY the provided text below. "
-        f"If the information is not contained in the document, reply strictly with: "
-        f"'There is no information regarding this in the uploaded document.'\n\n"
-        f"DOCUMENT:\n{doc_context[:15000]}\n\n"
-        f"QUESTION: {question}\n\nANSWER:"
-    )
-    for model in ['llama3.1-8b', 'mistral-7b', 'snowflake-arctic']:
-        try:
-            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", params=[prompt]).collect()
-            return res[0]["ANSWER"]
-        except Exception:
-            continue
-
-    q_words = [w.lower() for w in re.findall(r'\w+', question) if len(w) > 3]
-    matches = [line.strip() for line in doc_context.split('\n') if any(w in line.lower() for w in q_words) and len(line.strip()) > 20]
-    if matches:
-        return "**Relevant information found in document:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:4]])
-    return "There is no information regarding this in the uploaded document."
-
-def analyze_tabular_data(df: pd.DataFrame, filename: str) -> Tuple[str, Optional[pd.DataFrame]]:
-    num_rows, num_cols = df.shape
-    missing_vals = df.isnull().sum().sum()
-    numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
-    categorical_cols = df.select_dtypes(include=['object', 'category']).columns.tolist()
-    
-    analysis = f"### 📊 Document Analysis: `{filename}`\n\n"
-    analysis += f"**Dataset Overview:**\n"
-    analysis += f"- **Dimensions:** {num_rows:,} rows × {num_cols} columns\n"
-    analysis += f"- **Missing Data Points:** {missing_vals:,}\n"
-    analysis += f"- **Numeric Fields ({len(numeric_cols)}):** {', '.join(numeric_cols) if numeric_cols else 'None'}\n"
-    analysis += f"- **Categorical Fields ({len(categorical_cols)}):** {', '.join(categorical_cols) if categorical_cols else 'None'}\n\n"
-    
-    if numeric_cols:
-        analysis += "**Summary Statistics:**\n"
-        for col in numeric_cols[:4]:
-            analysis += f"- **{col}**: Total = `{df[col].sum():,.2f}`, Avg = `{df[col].mean():,.2f}`, Min = `{df[col].min():,.2f}`, Max = `{df[col].max():,.2f}`\n"
-            
-    return analysis, df
-
-def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
-    filename = uploaded_file.name
-    file_bytes = uploaded_file.read()
-    fname_lower = filename.lower()
-    
-    if fname_lower.endswith(".csv"):
-        try:
-            df = pd.read_csv(io.BytesIO(file_bytes))
-        except Exception:
-            df = pd.read_csv(io.BytesIO(file_bytes), encoding='latin1')
-        summary, df_out = analyze_tabular_data(df, filename)
-        return summary, df_out, df.to_string(max_rows=100)
-        
-    elif fname_lower.endswith((".xlsx", ".xls")):
-        try:
-            df = extract_df_from_xlsx(file_bytes)
-            summary, df_out = analyze_tabular_data(df, filename)
-            return summary, df_out, df.to_string(max_rows=100)
-        except Exception as e:
-            return f"Error analyzing Excel file `{filename}`: {str(e)}", None, None
-        
-    elif fname_lower.endswith(".pdf"):
-        extracted = extract_text_from_pdf(file_bytes)
-        summary = generate_comprehensive_summary(extracted, filename)
-        explanation = (
-            f"### 📄 Document Analysis: `{filename}`\n\n"
-            f"- **File Type:** Adobe PDF Document\n"
-            f"- **Word Count:** ~{len(extracted.split()):,} words\n\n"
-            f"**Comprehensive Summary & Key Insights:**\n\n{summary}"
-        )
-        return explanation, None, extracted
-        
-    elif fname_lower.endswith((".docx", ".doc")):
-        extracted = extract_text_from_docx(file_bytes)
-        summary = generate_comprehensive_summary(extracted, filename)
-        explanation = (
-            f"### 📝 Word Document Analysis: `{filename}`\n\n"
-            f"- **File Type:** Microsoft Word Document\n"
-            f"- **Word Count:** ~{len(extracted.split()):,} words\n\n"
-            f"**Comprehensive Summary & Key Insights:**\n\n{summary}"
-        )
-        return explanation, None, extracted
-        
-    return f"Unsupported file type for `{filename}`.", None, None
-
-# ==============================================================================
 # 10. CHART RENDERER
 # ==============================================================================
 def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
     if len(df.columns) < 2:
-        st.info("At least 2 columns required to render visualization.")
+        st.info("At least 2 columns are required to render visualization.")
         return
     all_cols = list(df.columns)
     col1, col2, col3 = st.columns(3)
@@ -639,13 +646,13 @@ def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
 SUGGESTED_QUESTIONS = [
     {"icon": "💰", "label": "Total Sales", "question": "What is the total sales revenue?",
      "detail": "Calculates gross sales revenue from fact tables defined in the semantic model."},
-    {"icon": "👥", "label": "Sales by Customer", "question": "What are total sales by customer name?",
+    {"icon": "👥", "label": "Sales by Customer", "question": "What are total sales by customer?",
      "detail": "Ranks customer accounts by sales revenue."},
-    {"icon": "📦", "label": "Top Products", "question": "What are the top 10 products by line total revenue?",
+    {"icon": "📦", "label": "Top Products", "question": "What are the top 10 products by sales?",
      "detail": "Ranks individual catalog products by line-item sales volume."},
-    {"icon": "🌍", "label": "Avg Sales by Region", "question": "What is the average sales by customer region?",
-     "detail": "Evaluates average order value across customer geographic regions."},
-    {"icon": "📈", "label": "Yearly Sales Trend", "question": "Show year wise sales revenue",
+    {"icon": "🌍", "label": "Avg Sales by Region", "question": "What is the average sales by region?",
+     "detail": "Evaluates average order revenue across customer geographic regions."},
+    {"icon": "📈", "label": "Yearly Sales Trend", "question": "Show year wise sales",
      "detail": "Evaluates annual sales totals across sequential calendar years."},
 ]
 
@@ -678,14 +685,7 @@ logged_in_name = st.session_state.get("display_name", "Admin User")
 # 13. SIDEBAR
 # ==============================================================================
 with st.sidebar:
-    st.markdown(
-        f'''
-        <div class="logo-container">
-            <img src="data:image/svg+xml;base64,{DILYTICS_LOGO_B64}" alt="DILYTICS">
-        </div>
-        ''',
-        unsafe_allow_html=True
-    )
+    st.markdown(DILYTICS_LOGO_HTML, unsafe_allow_html=True)
 
     st.markdown(
         f'<div style="text-align:center;">'
@@ -740,7 +740,7 @@ with st.sidebar:
             with st.spinner(f"Analyzing {uploaded_doc.name}..."):
                 analysis_text, extracted_df, raw_context = process_uploaded_document(uploaded_doc)
                 
-                # Context is strictly session-scoped
+                # Scoped to current conversation only
                 st.session_state.chat_sessions[current_id]["doc_context"] = raw_context
                 st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
                 
@@ -893,7 +893,7 @@ if user_prompt:
                 st.markdown(answer)
                 messages.append({"role": "assistant", "content": answer, "sql": None, "data": None})
         else:
-            with st.spinner("Interpreting query against Semantic Model..."):
+            with st.spinner("Analyzing question..."):
                 explanation, sql_query = generate_sql_from_prompt(user_prompt)
                 df = None
                 
@@ -913,6 +913,8 @@ if user_prompt:
                             st.info("The query returned no data.")
                     except Exception as e:
                         st.error(f"SQL Execution Error: {str(e)}")
+                elif explanation:
+                    st.markdown(explanation)
                 elif doc_ctx:
                     answer = answer_from_document_context(user_prompt, doc_ctx, doc_fname)
                     st.markdown(answer)
@@ -920,7 +922,7 @@ if user_prompt:
                 else:
                     fallback_text = (
                         "I could not formulate a semantic query for this question. "
-                        "Please verify the metric or dimension name, or ask about revenue, products, customers, or reps."
+                        "Please ask about sales revenue, averages, orders, products, customers, reps, or regions."
                     )
                     st.markdown(fallback_text)
                     explanation = fallback_text
