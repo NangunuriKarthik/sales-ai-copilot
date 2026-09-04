@@ -210,7 +210,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 5. NATURAL LANGUAGE SEMANTIC DATA MART ENGINE
+# 5. DYNAMIC NATURAL LANGUAGE SEMANTIC DATA MART ENGINE
 # ==============================================================================
 def normalize_text(text: str) -> str:
     return re.sub(r'[^\w\s]', '', text.lower()).strip()
@@ -223,14 +223,24 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
     if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
         return "Hello! I am your Sales Intelligence Assistant. Ask any question about enterprise revenue, customers, products, regions, or time trends.", None
 
-    # 2. Schema Guardrail Check (e.g., "county" is not in CORTEX.MART)
+    # 2. Guardrail for known missing dimensions
     if "county" in p:
         return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None
 
-    # 3. Parameter & Metric Aggregation Resolution
+    # 3. Detect Directionality (Least / Lowest vs Most / Top)
+    is_ascending = any(k in p for k in ["least", "lowest", "bottom", "worst", "minimum", "min", "smallest", "fewest"])
+    sort_dir = "ASC" if is_ascending else "DESC"
+    rank_label = "bottom (least)" if is_ascending else "top"
+
+    # 4. Detect Explicit Limits (e.g., "top 5", "least 3", default 10)
+    limit_match = re.search(r'\b(top|least|bottom|first|limit)\s+(\d+)\b', p)
+    record_limit = int(limit_match.group(2)) if limit_match else 10
+
+    # 5. Extract Years
     year_match = re.search(r'\b(19\d\d|20\d\d)\b', p)
     target_year = year_match.group(1) if year_match else None
 
+    # 6. Resolve Aggregation Metric
     is_avg = any(k in p for k in ["average", "avg", "mean"])
     is_count = any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"])
     
@@ -250,187 +260,177 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
         alias = "total_sales"
         metric_label = "total sales"
 
-    # 4. Dimension & Trend Routing
+    # 7. Semantic Query Generators with Directionality
 
-    # Region Dimension (e.g., "region wise total sales", "sales by region", "total sales by customer region")
-    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
-        if target_year:
-            sql = f"""
-SELECT c.region, {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
-JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = {target_year}
-GROUP BY c.region
-ORDER BY {alias} DESC
-            """.strip()
-            return f"Calculating {metric_label} by customer region for year {target_year}:", sql
-        else:
-            sql = f"""
-SELECT c.region, {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
-GROUP BY c.region
-ORDER BY {alias} DESC
-            """.strip()
-            return f"Calculating {metric_label} grouped by customer region:", sql
-
-    # Customer Dimension (e.g., "sales by customer", "customer wise sales", "top customers")
-    if "customer" in p and not any(k in p for k in ["region", "industry", "type"]):
+    # Product-level queries (handles: "which product has least sales?", "top products", etc.)
+    if any(k in p for k in ["product", "item", "sku"]) and not any(k in p for k in ["category", "brand"]):
+        year_filter = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
         sql = f"""
-SELECT c.customer_name, {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
-GROUP BY c.customer_name
-ORDER BY {alias} DESC
-LIMIT 15
-        """.strip()
-        return f"Calculating {metric_label} by customer:", sql
-
-    # Product Dimension (e.g., "top products", "sales by product", "product wise sales")
-    if "product" in p and not any(k in p for k in ["category", "brand"]):
-        sql = f"""
-SELECT p.product_name, {item_agg} AS {alias}
+SELECT 
+    p.product_name,
+    {item_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES_ITEM si
 JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+{year_filter}
 GROUP BY p.product_name
-ORDER BY {alias} DESC
-LIMIT 10
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
         """.strip()
-        return f"Ranking top products by {metric_label}:", sql
+        year_desc = f" for year {target_year}" if target_year else ""
+        return f"Ranking {rank_label} products by {metric_label}{year_desc}:", sql
 
-    # Product Category (e.g., "sales by category", "category wise sales")
-    if any(k in p for k in ["category", "categories"]):
-        if target_year:
-            sql = f"""
-SELECT p.category, {item_agg} AS {alias}
+    # Category queries (handles: "least sales category", "top categories")
+    if any(k in p for k in ["category", "categories", "sub-category", "subcategory"]):
+        year_filter = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    p.category,
+    {item_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES_ITEM si
 JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
-JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id
-JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = {target_year}
+{year_filter}
 GROUP BY p.category
-ORDER BY {alias} DESC
-            """.strip()
-            return f"Calculating {metric_label} by product category for year {target_year}:", sql
-        else:
-            sql = f"""
-SELECT p.category, {item_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM si
-JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
-GROUP BY p.category
-ORDER BY {alias} DESC
-            """.strip()
-            return f"Calculating {metric_label} by product category:", sql
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
+        """.strip()
+        year_desc = f" for year {target_year}" if target_year else ""
+        return f"Ranking {rank_label} product categories by {metric_label}{year_desc}:", sql
 
-    # Product Brand (e.g., "sales by brand", "brand wise sales")
+    # Brand queries
     if "brand" in p:
         sql = f"""
-SELECT p.brand, {item_agg} AS {alias}
+SELECT 
+    p.brand,
+    {item_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES_ITEM si
 JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
 GROUP BY p.brand
-ORDER BY {alias} DESC
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
         """.strip()
-        return f"Calculating {metric_label} by product brand:", sql
+        return f"Ranking {rank_label} brands by {metric_label}:", sql
 
-    # Order Channel (e.g., "sales by channel", "channel wise sales")
-    if "channel" in p:
+    # Customer queries
+    if "customer" in p and not any(k in p for k in ["region", "industry", "type"]):
         sql = f"""
-SELECT s.order_channel, {metric_agg} AS {alias}
+SELECT 
+    c.customer_name,
+    {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
-GROUP BY s.order_channel
-ORDER BY {alias} DESC
+JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
+GROUP BY c.customer_name
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
         """.strip()
-        return f"Calculating {metric_label} by order channel:", sql
+        return f"Ranking {rank_label} customers by {metric_label}:", sql
 
-    # Sales Representative (e.g., "sales by rep", "sales representative sales")
+    # Sales Rep queries
     if any(k in p for k in ["rep", "salesperson", "representative"]):
         sql = f"""
-SELECT r.sales_rep_name, {metric_agg} AS {alias}
+SELECT 
+    r.sales_rep_name,
+    {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_SALES_REP r ON s.sales_rep_id = r.sales_rep_id
 GROUP BY r.sales_rep_name
-ORDER BY {alias} DESC
-LIMIT 10
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
         """.strip()
-        return f"Calculating {metric_label} by sales representative:", sql
+        return f"Ranking {rank_label} sales representatives by {metric_label}:", sql
 
-    # Monthly Trend (e.g., "sales by month", "month wise sales", "monthly sales")
+    # Region queries (handles: "region wise total sales", "sales by region")
+    if "region" in p:
+        year_clause = f"JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    c.region,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
+{year_clause}
+GROUP BY c.region
+ORDER BY {alias} {sort_dir}
+        """.strip()
+        year_desc = f" for year {target_year}" if target_year else ""
+        return f"Sales by customer region{year_desc} (sorted {sort_dir}):", sql
+
+    # Month / Monthly queries
     if any(k in p for k in ["month", "monthly"]):
-        if target_year:
-            sql = f"""
-SELECT d.month, d.month_name, {metric_agg} AS {alias}
+        year_clause = f"WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    d.year,
+    d.month,
+    d.month_name,
+    {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-WHERE d.year = {target_year}
-GROUP BY d.month, d.month_name
-ORDER BY d.month ASC
-            """.strip()
-            return f"Calculating monthly {metric_label} for year {target_year}:", sql
-        else:
-            sql = f"""
-SELECT d.year, d.month, d.month_name, {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
+{year_clause}
 GROUP BY d.year, d.month, d.month_name
 ORDER BY d.year, d.month ASC
-            """.strip()
-            return f"Aggregating monthly {metric_label}:", sql
+        """.strip()
+        return f"Monthly {metric_label}:", sql
 
-    # Specific Year Query (e.g., "sales in 2000", "2005 total sales", "sales for year 2025")
+    # Specific Year Query
     if target_year:
         sql = f"""
-SELECT d.year, {metric_agg} AS {alias}
+SELECT 
+    d.year,
+    {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 WHERE d.year = {target_year}
 GROUP BY d.year
         """.strip()
-        return f"Calculating {metric_label} for year {target_year}:", sql
+        return f"Total sales for year {target_year}:", sql
 
-    # Yearly Trend across all years (e.g., "year wise sales", "sales by year", "annual sales")
-    if any(k in p for k in ["year wise", "yearly", "by year", "annual", "trend"]):
+    # Yearly trend across all calendar years
+    if any(k in p for k in ["year wise", "yearly", "annual", "by year"]):
         sql = f"""
-SELECT d.year, {metric_agg} AS {alias}
+SELECT 
+    d.year,
+    {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 GROUP BY d.year
 ORDER BY d.year ASC
         """.strip()
-        return f"Aggregating {metric_label} across calendar years:", sql
+        return f"Yearly trend across all calendar years:", sql
 
-    # Total / Overall Sales (e.g., "what is the total sales", "total sales", "gross revenue", "overall sales")
-    if any(k in p for k in ["total sales", "total revenue", "overall sales", "sales amount", "sales total", "gross sales"]):
+    # Total / Overall Sales (e.g. "what is the total sales", "overall sales")
+    if any(k in p for k in ["total sales", "total revenue", "overall sales", "sales amount", "gross sales"]):
         sql = f"SELECT {metric_agg} AS {alias} FROM CORTEX.MART.FACT_SALES s"
         return f"Calculating overall {metric_label} across all orders:", sql
 
-    # 5. Cortex LLM Fallback (Direct String Query with Schema)
-    clean_prompt = prompt.replace("'", "''")
-    cortex_instruction = f"""You are a Snowflake SQL generator for database CORTEX, schema MART.
-Tables:
-- FACT_SALES s (order_id, customer_id, sales_rep_id, order_status, order_channel, order_date, total_amount)
-- FACT_SALES_ITEM si (order_item_id, order_id, product_id, quantity, unit_price, line_total)
-- DIM_CUSTOMER c (customer_id, customer_name, customer_type, industry, city, state, country, region)
-- DIM_PRODUCT p (product_id, product_name, category, sub_category, brand)
-- DIM_SALES_REP r (sales_rep_id, sales_rep_name, region)
-- DIM_DATE d (date_key, year, month, month_name, quarter)
-Joins:
-- s.customer_id = c.customer_id
-- s.order_date = d.date_key
-- si.order_id = s.order_id
-- si.product_id = p.product_id
-- s.sales_rep_id = r.sales_rep_id
-Return ONLY executable Snowflake SQL without markdown formatting or backticks.
-Question: {clean_prompt}"""
+    # 8. Snowflake Cortex Fallback
+    cortex_instruction = (
+        f"You are a Snowflake SQL generator for database CORTEX, schema MART.\n"
+        f"Tables:\n"
+        f"- FACT_SALES s (order_id, customer_id, sales_rep_id, order_status, order_channel, order_date, total_amount)\n"
+        f"- FACT_SALES_ITEM si (order_item_id, order_id, product_id, quantity, unit_price, line_total)\n"
+        f"- DIM_CUSTOMER c (customer_id, customer_name, customer_type, industry, city, state, country, region)\n"
+        f"- DIM_PRODUCT p (product_id, product_name, category, sub_category, brand)\n"
+        f"- DIM_SALES_REP r (sales_rep_id, sales_rep_name, region)\n"
+        f"- DIM_DATE d (date_key, year, month, month_name, quarter)\n"
+        f"Joins:\n"
+        f"- s.customer_id = c.customer_id\n"
+        f"- s.order_date = d.date_key\n"
+        f"- si.order_id = s.order_id\n"
+        f"- si.product_id = p.product_id\n"
+        f"- s.sales_rep_id = r.sales_rep_id\n"
+        f"Return ONLY valid Snowflake SQL without markdown formatting or backticks for: {prompt}"
+    )
 
     for model in ['llama3.1-8b', 'mistral-7b']:
         try:
-            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', '{cortex_instruction}') AS sql_out").collect()
+            res = session.sql(
+                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS sql_out",
+                params=[model, cortex_instruction]
+            ).collect()
             raw_sql = res[0]["SQL_OUT"].strip()
             clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
             if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
-                return f"Analysis query for: **{prompt}**", clean_sql
+                return f"Generated SQL for: **{prompt}**", clean_sql
         except Exception:
             continue
 
@@ -891,11 +891,15 @@ if user_prompt:
                     try:
                         df_result = session.sql(sql_query).to_pandas()
                         if df_result is not None and not df_result.empty:
-                            tab_data, tab_chart = st.tabs(["Data Table 📄", "Visualization 📈"])
-                            with tab_data:
-                                st.dataframe(df_result, use_container_width=True)
-                            with tab_chart:
-                                display_chart_tab(df_result, key_prefix=f"live_{current_id}")
+                            first_val = df_result.iloc[0, -1] if len(df_result.columns) > 0 else None
+                            if pd.isnull(first_val) or (isinstance(first_val, (int, float)) and first_val == 0 and len(df_result) == 1):
+                                st.info("The query executed, but no matching records were found in the Snowflake Data Mart.")
+                            else:
+                                tab_data, tab_chart = st.tabs(["Data Table 📄", "Visualization 📈"])
+                                with tab_data:
+                                    st.dataframe(df_result, use_container_width=True)
+                                with tab_chart:
+                                    display_chart_tab(df_result, key_prefix=f"live_{current_id}")
                         else:
                             st.info("No matching records were found in the Snowflake Data Mart.")
                     except Exception as e:
