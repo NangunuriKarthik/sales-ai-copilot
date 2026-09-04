@@ -225,7 +225,7 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
 
     # 2. Schema Guardrail (Missing Dimensions)
     if "county" in tokens:
-        return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None[cite: 1]
+        return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None
 
     # 3. Detect Metric Intent
     is_avg = any(w in tokens for w in ["average", "avg", "mean"])
@@ -254,11 +254,10 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
         metric_label = "total sales"
 
     # 4. Detect Directionality & Limits
-    is_asc = any(w in tokens for w in ["least", "lowest", "bottom", "worst", "min", "minimum", "smallest", "fewest"])[cite: 1]
-    is_desc = any(w in tokens for w in ["highest", "top", "best", "most", "max", "maximum", "largest", "greatest"])[cite: 1]
+    is_asc = any(w in tokens for w in ["least", "lowest", "bottom", "worst", "min", "minimum", "smallest", "fewest"])
+    is_desc = any(w in tokens for w in ["highest", "top", "best", "most", "max", "maximum", "largest", "greatest"])
     sort_dir = "ASC" if is_asc else "DESC"
 
-    # Detect single-item ranking ("which year has highest...", "top product")
     is_single_best = any(w in p for w in ["which", "what is the best", "what is the highest", "what is the lowest", "what is the least"])
 
     limit_match = re.search(r'\b(?:top|bottom|least|first|limit)\s+(\d+)\b', p)
@@ -269,24 +268,17 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
     else:
         limit_val = 10
 
-    # 5. Extract Specific Filters (e.g., Year: 2000, 2025; Region: North, South)
+    # 5. Extract Specific Filters
     year_match = re.search(r'\b(19\d\d|20\d\d)\b', p)
     target_year = year_match.group(1) if year_match else None
-
-    detected_region = None
-    for r in ["north", "south", "east", "west", "central"]:
-        if r in tokens:
-            detected_region = r.capitalize()
-            break
 
     # --------------------------------------------------------------------------
     # 6. DIMENSION RESOLUTION & SQL GENERATION
     # --------------------------------------------------------------------------
 
-    # A. Year Dimension (handles: "which year has highest sales?", "sales by year", "yearly trend", "year wise sales")
+    # A. Year Dimension
     if any(w in tokens for w in ["year", "years", "annual", "annually", "yearly"]):
         if target_year and not any(w in tokens for w in ["which", "highest", "lowest", "least", "best", "rank"]):
-            # Specific year lookup
             sql = f"""
 SELECT 
     d.year,
@@ -296,9 +288,8 @@ JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 WHERE d.year = {target_year}
 GROUP BY d.year
             """.strip()
-            return f"Calculating {metric_label} for year {target_year}:", sql[cite: 1]
+            return f"Calculating {metric_label} for year {target_year}:", sql
         else:
-            # Ranking years or displaying annual breakdown
             limit_clause = f"LIMIT {limit_val}" if (is_asc or is_desc or is_single_best) else ""
             order_clause = f"ORDER BY {alias} {sort_dir}" if (is_asc or is_desc or is_single_best) else "ORDER BY d.year ASC"
             sql = f"""
@@ -312,9 +303,9 @@ GROUP BY d.year
 {limit_clause}
             """.strip()
             direction_desc = "highest" if sort_dir == "DESC" else "lowest"
-            return f"Analyzing {direction_desc} sales by calendar year:", sql[cite: 1]
+            return f"Analyzing {direction_desc} sales by calendar year:", sql
 
-    # B. Month Dimension (handles: "sales by month", "monthly sales in 2025", "which month has least sales")
+    # B. Month Dimension
     if any(w in tokens for w in ["month", "months", "monthly"]):
         year_filter = f"WHERE d.year = {target_year}" if target_year else ""
         order_clause = f"ORDER BY {alias} {sort_dir}" if (is_asc or is_desc or is_single_best) else "ORDER BY d.month ASC"
@@ -332,7 +323,7 @@ GROUP BY d.month, d.month_name
 {limit_clause}
         """.strip()
         y_text = f" for year {target_year}" if target_year else ""
-        return f"Analyzing monthly {metric_label}{y_text}:", sql[cite: 1]
+        return f"Analyzing monthly {metric_label}{y_text}:", sql
 
     # C. Quarter Dimension
     if any(w in tokens for w in ["quarter", "quarters", "quarterly"]):
@@ -347,11 +338,11 @@ JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 GROUP BY d.quarter
 ORDER BY d.quarter ASC
         """.strip()
-        return f"Aggregating {metric_label} by calendar quarter:", sql[cite: 1]
+        return f"Aggregating {metric_label} by calendar quarter:", sql
 
-    # D. Product Dimension (handles: "which product has least sales?", "top products", "best selling product")
+    # D. Product Dimension
     if any(w in tokens for w in ["product", "products", "item", "items", "sku"]):
-        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""[cite: 1]
+        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
         sql = f"""
 SELECT 
     p.product_name,
@@ -364,12 +355,12 @@ ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
         label_rank = "lowest-performing" if is_asc else "top-performing"
-        return f"Ranking {label_rank} products by {metric_label}:", sql[cite: 1]
+        return f"Ranking {label_rank} products by {metric_label}:", sql
 
     # E. Category & Subcategory Dimension
     if any(w in tokens for w in ["category", "categories", "subcategory", "subcategories"]):
-        col = "p.sub_category" if "sub" in p else "p.category"[cite: 1]
-        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""[cite: 1]
+        col = "p.sub_category" if "sub" in p else "p.category"
+        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
         sql = f"""
 SELECT 
     {col},
@@ -381,7 +372,7 @@ GROUP BY {col}
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Analyzing {metric_label} by product category:", sql[cite: 1]
+        return f"Analyzing {metric_label} by product category:", sql
 
     # F. Brand Dimension
     if any(w in tokens for w in ["brand", "brands"]):
@@ -395,9 +386,9 @@ GROUP BY p.brand
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Analyzing {metric_label} by brand:", sql[cite: 1]
+        return f"Analyzing {metric_label} by brand:", sql
 
-    # G. Customer Dimension (handles: "sales by customer", "top customers", "customer sales")
+    # G. Customer Dimension
     if any(w in tokens for w in ["customer", "customers", "client", "clients", "account", "accounts"]) and not any(w in tokens for w in ["region", "industry", "type", "tier"]):
         sql = f"""
 SELECT 
@@ -409,11 +400,11 @@ GROUP BY c.customer_name
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Calculating {metric_label} by customer account:", sql[cite: 1]
+        return f"Calculating {metric_label} by customer account:", sql
 
     # H. Customer Type / Tier / Industry
     if any(w in tokens for w in ["industry", "industries", "tier", "segment", "enterprise", "smb"]):
-        dim_col = "c.industry" if "industry" in tokens else "c.customer_type"[cite: 1]
+        dim_col = "c.industry" if "industry" in tokens else "c.customer_type"
         sql = f"""
 SELECT 
     {dim_col},
@@ -423,11 +414,11 @@ JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
 GROUP BY {dim_col}
 ORDER BY {alias} {sort_dir}
         """.strip()
-        return f"Evaluating {metric_label} across customer segments:", sql[cite: 1]
+        return f"Evaluating {metric_label} across customer segments:", sql
 
-    # I. Region Dimension (handles: "region wise total sales", "sales by region", "which region has highest sales")
+    # I. Region Dimension
     if any(w in tokens for w in ["region", "regions", "territory", "territories"]):
-        year_join = f"JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""[cite: 1]
+        year_join = f"JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
         limit_clause = f"LIMIT {limit_val}" if is_single_best else ""
         sql = f"""
 SELECT 
@@ -440,9 +431,9 @@ GROUP BY c.region
 ORDER BY {alias} {sort_dir}
 {limit_clause}
         """.strip()
-        return f"Calculating {metric_label} grouped by customer region:", sql[cite: 1]
+        return f"Calculating {metric_label} grouped by customer region:", sql
 
-    # J. Sales Rep Dimension (handles: "sales by rep", "top salesperson", "rep performance")
+    # J. Sales Rep Dimension
     if any(w in tokens for w in ["rep", "reps", "salesperson", "representative", "salespeople"]):
         sql = f"""
 SELECT 
@@ -454,9 +445,9 @@ GROUP BY r.sales_rep_name
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Evaluating sales representative performance by {metric_label}:", sql[cite: 1]
+        return f"Evaluating sales representative performance by {metric_label}:", sql
 
-    # K. Channel Dimension (handles: "sales by channel", "online sales")
+    # K. Channel Dimension
     if any(w in tokens for w in ["channel", "channels"]):
         sql = f"""
 SELECT 
@@ -466,9 +457,9 @@ FROM CORTEX.MART.FACT_SALES s
 GROUP BY s.order_channel
 ORDER BY {alias} {sort_dir}
         """.strip()
-        return f"Analyzing {metric_label} by sales channel:", sql[cite: 1]
+        return f"Analyzing {metric_label} by sales channel:", sql
 
-    # L. Order Status (handles: "completed orders", "cancelled orders", "sales by status")
+    # L. Order Status
     if any(w in tokens for w in ["status", "completed", "cancelled", "pending"]):
         sql = f"""
 SELECT 
@@ -479,12 +470,12 @@ FROM CORTEX.MART.FACT_SALES s
 GROUP BY s.order_status
 ORDER BY total_sales DESC
         """.strip()
-        return "Evaluating sales volume by order status:", sql[cite: 1]
+        return "Evaluating sales volume by order status:", sql
 
-    # M. Overall Gross Sales / Averages / Totals (No dimension specified)
+    # M. Overall Gross Sales / Averages / Totals
     if any(w in tokens for w in ["sales", "revenue", "amount", "total", "average", "avg"]):
         sql = f"SELECT {fact_metric} AS {alias} FROM CORTEX.MART.FACT_SALES s"
-        return f"Calculating overall {metric_label} across all recorded transactions:", sql[cite: 1]
+        return f"Calculating overall {metric_label} across all recorded transactions:", sql
 
     return "I could not formulate a query for this question. Please specify metrics (sales, revenue, orders) or dimensions (year, month, products, customers, regions).", None
 
@@ -534,7 +525,6 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
 def answer_user_question_on_document(question: str, doc_context: str, filename: str, df: Optional[pd.DataFrame] = None) -> str:
     q_lower = question.lower().strip()
 
-    # Priority 1: Direct High-Accuracy Pandas Tabular Analytics
     if df is not None and not df.empty:
         col_map = {col.lower().strip(): col for col in df.columns}
         matched_target_col = None
@@ -603,7 +593,6 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
                 preview = matched_df.dropna(how='all', axis=1).head(15)
                 return f"Found **{len(matched_df)}** matching record(s) in **`{filename}`**:\n\n" + preview.to_markdown(index=False)
 
-    # Priority 2: Generative QA with Document Context
     clean_doc = doc_context[:10000].replace("'", "''")
     clean_q = question.replace("'", "''")
     prompt = f"Answer factually using only this data from {filename}:\n\n{clean_doc}\n\nQuestion: {clean_q}"
