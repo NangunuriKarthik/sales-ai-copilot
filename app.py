@@ -511,109 +511,240 @@ def _hard_reliable_sql(question: str) -> Optional[Tuple[str, str]]:
     return None
 
 
-def generate_sql_for_database(prompt: str, conversation_context: str = "") -> Tuple[str, Optional[str]]:
-    """Semantic-model-grounded SQL generation.
+def _select_relevant_semantic_context(question: str, max_tables: int = 6, max_examples: int = 8) -> str:
+    """Build a compact semantic context from the YAML model."""
+    q = normalize_text(question)
+    scored = []
 
-    Deterministic keyword branches are intentionally removed. The YAML model,
-    retrieved verified examples and conversation context are supplied to Cortex.
-    """
-    norm_p = normalize_text(prompt)
+    for table in SEMANTIC_MODEL.get("tables", []):
+        semantic_text = _semantic_text_for_table(table)
+        qt = set(q.split())
+        st = set(semantic_text.split())
+        overlap = len(qt & st) / max(1, len(qt | st))
+        seq = difflib.SequenceMatcher(None, q, semantic_text[:1500]).ratio()
+        score = 0.65 * overlap + 0.35 * seq
 
-    # IMPORTANT: restore the reliable behavior for common questions before
-    # invoking Cortex. The previous revision removed this layer, which caused
-    # even canonical questions such as "What is the total sales amount?" to
-    # fall through to the generic semantic/LLM path.
-    reliable = _hard_reliable_sql(prompt)
-    if reliable:
-        ok, _ = validate_read_only_sql(reliable[1])
-        if ok:
-            return reliable
+        # Always favor the fact/date tables because they define grain and time.
+        if normalize_text(table.get("name", "")) in {"fact_sales", "fact_sales_item", "dim_date"}:
+            score += 0.20
+        scored.append((score, table))
 
-    if norm_p in {"hi", "hello", "hey", "help", "who are you", "good morning", "good evening"}:
-        return "Hello! I am your Sales Intelligence Assistant. Ask me about sales, customers, products, regions, representatives, channels, or time trends.", None
+    scored.sort(key=lambda x: x[0], reverse=True)
+    selected = [t for _, t in scored[:max_tables]]
 
-    # Surface known unavailable dimensions explicitly rather than hallucinating them.
-    requested_fields = [f["name"] for t in SEMANTIC_MODEL.get("tables", []) for g in ("dimensions", "measures", "time_dimensions") for f in t.get(g, [])]
-    if "county" in norm_p and "county" not in [normalize_text(x) for x in requested_fields]:
-        return "⚠️ The semantic model does not contain a county dimension. Available customer geography includes city, state, country, postal code and region.", None
+    lines = [
+        f"SEMANTIC MODEL: {SEMANTIC_MODEL.get('name', 'Sales Intelligence Model')}",
+        SEMANTIC_MODEL.get("description", ""),
+        "",
+        "TABLES AND FIELDS:"
+    ]
 
-    examples = retrieve_verified_queries(prompt, top_k=5)
-    examples_text = "\n\n".join(
-        f"VERIFIED EXAMPLE {i+1}: {e['question']}\nSQL:\n{e['sql']}"
-        for i, e in enumerate(examples)
-    ) or "No closely matching verified example was found."
+    for table in selected:
+        bt = table.get("base_table", {})
+        physical = ".".join(str(x) for x in [
+            bt.get("database"), bt.get("schema"), bt.get("table")
+        ] if x)
+        lines.append(f"TABLE {table.get('name')} -> {physical}")
+        lines.append(f"DESCRIPTION: {table.get('description', '')}")
 
-    prompt_text = f"""You are the SQL reasoning layer for a Snowflake Sales Intelligence application.
-Use the semantic model below as the source of truth. Interpret the user's business intent, not exact keywords.
-Paraphrases such as 'how much did we make', 'revenue', 'sales amount', 'best performing', 'worst performing', 'by month',
-'for 2000', 'during 2025', 'how many orders', 'which customer bought the most', etc. should map to the appropriate semantic concepts.
+        for group in ("dimensions", "measures", "time_dimensions"):
+            for field in table.get(group, []):
+                line = f"- {field.get('name')}: {field.get('description', '')}"
+                syn = field.get("synonyms", []) or []
+                if syn:
+                    line += " | synonyms: " + ", ".join(map(str, syn))
+                if field.get("expr"):
+                    line += " | expr: " + str(field["expr"])
+                if field.get("default_aggregation"):
+                    line += " | default aggregation: " + str(field["default_aggregation"])
+                lines.append(line)
 
-{SEMANTIC_PROMPT}
+    lines.extend([
+        "",
+        "CRITICAL BUSINESS GRAIN:",
+        "FACT_SALES = one row per order/header. FACT_SALES.total_amount is the order-level sales amount.",
+        "FACT_SALES_ITEM = one row per product line. FACT_SALES_ITEM.line_total is the product-line sales amount.",
+        "Use FACT_SALES.total_amount for total sales, customer, region, channel, order and sales-rep metrics.",
+        "Use FACT_SALES_ITEM.line_total for product, category, brand and product-line metrics.",
+        "Never sum FACT_SALES.total_amount after a one-to-many join to FACT_SALES_ITEM unless order grain is restored.",
+        "DIM_DATE is authoritative for year/month/quarter/date analysis.",
+        "Use only fields represented by the model; never invent columns."
+    ])
 
-RETRIEVED VERIFIED EXAMPLES:
-{examples_text}
+    examples = retrieve_verified_queries(question, top_k=max_examples)
+    if examples:
+        lines.append("")
+        lines.append("VERIFIED QUERY EXAMPLES — use as semantic patterns, not exact-match requirements:")
+        for i, example in enumerate(examples, 1):
+            sql = clean_generated_sql(example["sql"])
+            if len(sql) > 2400:
+                sql = sql[:2400] + "\n-- example truncated"
+            lines.append(f"EXAMPLE {i}: {example['question']}\n{sql}")
 
-RECENT CONVERSATION CONTEXT:
-{conversation_context[-5000:] if conversation_context else 'None'}
+    return "\n".join(lines)
+
+
+def _extract_sql_from_llm(raw: str) -> str:
+    """Extract the SQL portion when a model adds markdown or short prose."""
+    sql = clean_generated_sql(raw)
+    match = re.search(r"(?is)\b(with|select)\b.*", sql)
+    if match:
+        sql = sql[match.start():]
+    if ";" in sql:
+        sql = sql.split(";", 1)[0]
+    return clean_generated_sql(sql)
+
+
+def _llm_sql_generation(
+    question: str,
+    conversation_context: str = "",
+    repair_context: str = ""
+) -> Optional[str]:
+    """General natural-language-to-SQL reasoning grounded in the YAML."""
+    semantic_context = _select_relevant_semantic_context(question)
+
+    prompt_text = f"""
+You are the primary SQL reasoning engine for a Snowflake Sales Intelligence warehouse.
+
+Translate ANY answerable business question about the supplied semantic model into
+one correct Snowflake SQL query. Do not rely on exact wording from verified
+queries. Understand paraphrases, business language, filters, rankings,
+comparisons, dates, aggregations, and multi-dimensional questions.
+
+{semantic_context}
+
+RECENT CONVERSATION:
+{conversation_context[-6000:] if conversation_context else "None"}
+
+{repair_context}
 
 USER QUESTION:
-{prompt}
+{question}
 
-Rules:
-1. Produce ONLY executable Snowflake SQL, with no markdown or explanation.
-2. Use physical tables/columns from the semantic model's base_table and expr definitions.
-3. Preserve the correct grain: order-level metrics use FACT_SALES; product-level metrics use FACT_SALES_ITEM.
-4. Apply all explicit filters (year, month, customer, product, category, region, channel, status, etc.).
-5. For rankings, honor top/bottom/least/most and explicit N; do not invent N when the user gives one.
-6. For aggregations, distinguish SUM, AVG, COUNT, MIN and MAX according to intent.
-7. For year/month/quarter questions use DIM_DATE rather than guessing date functions from raw dates.
-8. If the request is not answerable from the model, return exactly: CANNOT_ANSWER_FROM_MODEL
+REQUIREMENTS:
+1. Return ONLY one executable SELECT/WITH query.
+2. Use only tables and columns supported by the semantic model.
+3. Apply every explicit filter, date condition, grouping, ranking and comparison.
+4. Use DIM_DATE for calendar/time analysis when available.
+5. Select the correct measure from the semantic meaning, not from a keyword.
+6. Respect grain:
+   - order-level: FACT_SALES.total_amount
+   - line/product-level: FACT_SALES_ITEM.line_total
+7. Prevent fan-out duplication when mixing order and line-item facts.
+8. For top/bottom/best/worst, sort the requested metric in the requested direction and honor explicit N.
+9. For comparisons, return both sides and calculate requested differences/percentages.
+10. Use NULLIF for percentage-change denominators.
+11. Use exact physical table/column names from the model.
+12. Never invent a field. If the question cannot be answered from this model, do not fabricate one.
+13. Never produce write operations or administrative statements.
+14. Do not use SELECT * unless explicitly requested.
+15. The final SQL must be safe for direct execution in Snowflake.
 """
 
-    for model in ["llama3.1-8b", "mistral-7b"]:
+    # Try a stronger model first, then compatible fallbacks. If a model is not
+    # enabled in the account, the exception is simply ignored.
+    for model in [
+        "claude-sonnet-4-5",
+        "llama3.3-70b",
+        "llama3.1-70b",
+        "llama3.1-8b",
+        "mistral-7b",
+    ]:
         try:
-            res = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS sql_out",
+            rows = session.sql(
+                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS SQL_OUT",
                 params=[model, prompt_text]
             ).collect()
-            raw = res[0]["SQL_OUT"]
-            if str(raw).strip() == "CANNOT_ANSWER_FROM_MODEL":
-                return "I could not answer that from the current Sales semantic model. Please try a question about sales, customers, products, representatives, regions, channels, or dates.", None
-            sql = clean_generated_sql(raw)
-            ok, reason = validate_read_only_sql(sql)
-            if ok:
-                return f"Interpreting your question using the Sales semantic model: **{prompt}**", sql
+            if not rows:
+                continue
+
+            raw = str(rows[0]["SQL_OUT"])
+            sql = _extract_sql_from_llm(raw)
+
+            if re.fullmatch(r"CANNOT_ANSWER_FROM_MODEL", sql, flags=re.IGNORECASE):
+                continue
+
+            safe, _ = validate_read_only_sql(sql)
+            if safe:
+                return sql
         except Exception:
             continue
 
-    # Final fallback: reuse the closest verified query only when the similarity
-    # is strong enough. This preserves the original application's useful
-    # behavior instead of returning a dead end after a Cortex failure.
-    matches = retrieve_verified_queries(prompt, top_k=3)
-    if matches:
-        qn = normalize_text(prompt)
-        scored = []
-        for item in matches:
-            cn = normalize_text(item["question"])
-            seq = difflib.SequenceMatcher(None, qn, cn).ratio()
-            qt, ct = set(qn.split()), set(cn.split())
-            overlap = len(qt & ct) / max(1, len(qt | ct))
-            scored.append((0.60 * seq + 0.40 * overlap, item))
-        scored.sort(key=lambda x: x[0], reverse=True)
-        if scored and scored[0][0] >= 0.52:
-            raw_verified = scored[0][1]["sql"]
-            # Convert logical __table placeholders used by the YAML examples.
-            for key, physical in PHYSICAL_TABLE_FALLBACK.items():
-                raw_verified = re.sub(rf"\\b__{re.escape(key)}\\b", physical, raw_verified, flags=re.IGNORECASE)
-            raw_verified = clean_generated_sql(raw_verified)
-            ok, _ = validate_read_only_sql(raw_verified)
-            if ok:
-                return (
-                    f"Using the closest verified semantic pattern for: **{prompt}**",
-                    raw_verified,
-                )
+    return None
 
-    return "I could not formulate a safe query for this question from the current semantic model. Please try a sales, revenue, order, customer, product, region, channel, representative, or date question.", None
+
+def _repair_sql_from_database_error(
+    question: str,
+    sql: str,
+    db_error: str,
+    conversation_context: str = ""
+) -> Optional[str]:
+    """Regenerate SQL using the real Snowflake execution error as feedback."""
+    repair_context = f"""
+A previous SQL draft was generated for the same question.
+
+PREVIOUS SQL:
+{sql}
+
+SNOWFLAKE ERROR:
+{db_error[:6000]}
+
+Fix the SQL based on the actual Snowflake error while preserving the original
+business intent. Return only the corrected SQL.
+"""
+    return _llm_sql_generation(question, conversation_context, repair_context)
+
+
+def generate_sql_for_database(
+    prompt: str,
+    conversation_context: str = ""
+) -> Tuple[str, Optional[str]]:
+    """General warehouse question answering.
+
+    Semantic LLM reasoning is the primary path. Deterministic SQL exists only
+    as a last-resort availability layer.
+    """
+    norm_p = normalize_text(prompt)
+
+    if norm_p in {"hi", "hello", "hey", "help", "who are you", "good morning", "good evening"}:
+        return (
+            "Hello! I am your Sales Intelligence Assistant. Ask me anything "
+            "that can be answered from the Sales Intelligence warehouse."
+        ), None
+
+    # PRIMARY: general semantic reasoning.
+    sql = _llm_sql_generation(prompt, conversation_context)
+    if sql:
+        return (
+            f"Interpreting your question from the Sales Intelligence semantic model: **{prompt}**",
+            sql
+        )
+
+    # SECONDARY: deterministic availability safety-net.
+    reliable = _hard_reliable_sql(prompt)
+    if reliable:
+        safe, _ = validate_read_only_sql(reliable[1])
+        if safe:
+            return reliable
+
+    # LAST: verified-query pattern fallback.
+    for example in retrieve_verified_queries(prompt, top_k=5):
+        sql = clean_generated_sql(example["sql"])
+        for key, physical in PHYSICAL_TABLE_FALLBACK.items():
+            sql = re.sub(
+                rf"\b__{re.escape(key)}\b",
+                physical,
+                sql,
+                flags=re.IGNORECASE
+            )
+        safe, _ = validate_read_only_sql(sql)
+        if safe:
+            return f"Using a verified semantic pattern related to: **{prompt}**", sql
+
+    return (
+        "I could not generate a safe warehouse query for this question. "
+        "No unsupported data was fabricated."
+    ), None
 
 # ==============================================================================
 # 6. ENHANCED DOCUMENT INTELLIGENCE & ACCURATE TABULAR QA
@@ -1135,8 +1266,47 @@ if user_prompt:
                             st.error(f"SQL validation blocked this query: {validation_error}")
                             response_text = "The generated query was blocked by the SQL safety validator."
                         else:
-                            df_result = session.sql(sql_query).to_pandas()
-                            if df_result is not None and not df_result.empty:
+                            # The database itself is the final SQL validator.
+                            # If the first draft fails, regenerate using the
+                            # actual Snowflake error rather than giving up.
+                            execution_error = None
+                            df_result = None
+
+                            for attempt in range(3):
+                                try:
+                                    df_result = session.sql(sql_query).to_pandas()
+                                    execution_error = None
+                                    break
+                                except Exception as exc:
+                                    execution_error = str(exc)
+                                    if attempt >= 2:
+                                        break
+
+                                    repaired_sql = _repair_sql_from_database_error(
+                                        user_prompt,
+                                        sql_query,
+                                        execution_error,
+                                        recent_context
+                                    )
+                                    if not repaired_sql:
+                                        break
+
+                                    safe_repair, repair_error = validate_read_only_sql(repaired_sql)
+                                    if not safe_repair:
+                                        execution_error = repair_error
+                                        break
+
+                                    sql_query = repaired_sql
+
+                            if execution_error:
+                                st.error(
+                                    f"Snowflake could not execute the generated query: {execution_error}"
+                                )
+                                response_text = (
+                                    "The question was understood, but Snowflake rejected "
+                                    "the generated SQL after multiple repair attempts."
+                                )
+                            elif df_result is not None and not df_result.empty:
                                 first_val = df_result.iloc[0, -1] if len(df_result.columns) > 0 else None
                                 if pd.isnull(first_val) or (isinstance(first_val, (int, float)) and first_val == 0 and len(df_result) == 1):
                                     st.info("The query executed, but no matching records were found in the Snowflake Data Mart.")
