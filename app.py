@@ -1,4 +1,3 @@
-import base64
 import difflib
 import io
 import json
@@ -21,25 +20,25 @@ except ImportError:
 # 1. PAGE CONFIGURATION
 # ==============================================================================
 st.set_page_config(
-    page_title="Sales AI Copilot",
-    page_icon="⚡",
+    page_title="Sales Copilot",
+    page_icon="✨",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
 # ==============================================================================
-# 2. BULLETPROOF USER AUTHENTICATION
+# 2. BULLETPROOF AUTHENTICATION
 # ==============================================================================
 USER_DATABASE = {
     "admin": {
         "password": "Copilot@2026",
         "name": "Admin User",
-        "role": "ACCOUNTADMIN"
+        "role": "Account Administrator"
     },
     "analyst": {
         "password": "Copilot@2026",
         "name": "Sales Analyst",
-        "role": "ANALYST"
+        "role": "Commercial Analyst"
     }
 }
 
@@ -53,22 +52,22 @@ if "role" not in st.session_state:
     st.session_state.role = None
 
 def render_login_form():
-    col1, col2, col3 = st.columns([1, 1.4, 1])
+    col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
         st.markdown("""
-        <div style="background: linear-gradient(180deg, #ede9fe 0%, #f5f3ff 100%); 
-                    border: 1px solid #ddd6fe; padding: 32px; border-radius: 16px; 
-                    box-shadow: 0 4px 20px rgba(109, 40, 217, 0.1); text-align: center;">
-            <h2 style="color: #4c1d95; margin-bottom: 4px;">⚡ Sales AI Copilot</h2>
-            <p style="color: #6d28d9; font-size: 0.9rem; margin-bottom: 24px;">Please sign in to access enterprise sales intelligence</p>
+        <div style="background: #ffffff; border: 1px solid #e5e7eb; border-radius: 20px; 
+                    padding: 40px; box-shadow: 0 4px 25px rgba(0,0,0,0.04); text-align: center;">
+            <div style="font-size: 2.2rem; margin-bottom: 8px;">✨</div>
+            <h2 style="color: #111827; font-weight: 600; margin-bottom: 6px; letter-spacing: -0.5px;">Welcome back</h2>
+            <p style="color: #6b7280; font-size: 0.95rem; margin-bottom: 30px;">Sign in to your Sales AI Copilot workspace</p>
         </div>
         """, unsafe_allow_html=True)
         
         with st.form("login_form", clear_on_submit=False):
             username_input = st.text_input("Username", placeholder="e.g. admin or analyst")
             password_input = st.text_input("Password", type="password", placeholder="••••••••")
-            submit_button = st.form_submit_button("🔐 Sign In", use_container_width=True, type="primary")
+            submit_button = st.form_submit_button("Continue", use_container_width=True, type="primary")
 
             if submit_button:
                 user_info = USER_DATABASE.get(username_input.strip().lower())
@@ -79,7 +78,7 @@ def render_login_form():
                     st.session_state.role = user_info["role"]
                     st.rerun()
                 else:
-                    st.error("Invalid Username or Password. Please try again.")
+                    st.error("Invalid credentials. Please try again.")
 
 if not st.session_state.authenticated:
     render_login_form()
@@ -104,21 +103,141 @@ def get_snowflake_session():
 session = get_snowflake_session()
 
 # ==============================================================================
-# 4. PARAMETER-AWARE SEMANTIC QUERY ENGINE (100% ACCURATE)
+# 4. GEMINI AESTHETIC STYLING (CSS)
 # ==============================================================================
+st.markdown("""
+<style>
+    /* Google Workspace Typography & Canvas */
+    @import url('https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600&family=Roboto:wght@300;400;500&display=swap');
+    
+    html, body, [class*="css"] {
+        font-family: 'Google Sans', 'Roboto', -apple-system, BlinkMacSystemFont, sans-serif;
+        color: #1f2937;
+    }
+
+    /* Clean, distraction-free sidebar */
+    section[data-testid="stSidebar"] {
+        background-color: #f8fafd !important;
+        border-right: 1px solid #e5e7eb !important;
+    }
+    
+    /* Top Bar Header Style */
+    .gemini-header-title {
+        font-size: 1.65rem;
+        font-weight: 500;
+        color: #111827;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 2px;
+    }
+    .gemini-header-sub {
+        font-size: 0.88rem;
+        color: #6b7280;
+        margin-bottom: 20px;
+    }
+    
+    /* Elegant Sidebar Buttons */
+    div[data-testid="stSidebar"] div[data-testid="stButton"] > button {
+        border-radius: 24px;
+        font-weight: 500;
+        font-size: 0.88rem;
+        border: 1px solid #e5e7eb;
+        background-color: #ffffff;
+        color: #374151;
+        transition: all 0.15s ease-in-out;
+        padding: 8px 16px;
+    }
+    div[data-testid="stSidebar"] div[data-testid="stButton"] > button:hover {
+        background-color: #f3f4f6;
+        border-color: #d1d5db;
+        color: #111827;
+    }
+    
+    /* New Chat Primary Pill */
+    div[data-testid="stSidebar"] .new-chat-btn button {
+        background-color: #eef2ff !important;
+        border: 1px solid #c7d2fe !important;
+        color: #4338ca !important;
+        font-weight: 600 !important;
+    }
+
+    /* Chat Messages Look */
+    div[data-testid="stChatMessage"] {
+        background-color: transparent !important;
+        padding: 16px 0px;
+    }
+    div[data-testid="stChatMessageContent"] {
+        font-size: 0.96rem;
+        line-height: 1.6;
+        color: #1f2937;
+    }
+
+    /* Bottom User Profile Card */
+    .user-footer-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 14px;
+        padding: 12px 14px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-top: 24px;
+    }
+    .brand-dilytics {
+        display: inline-block;
+        background-color: #D50000;
+        color: #ffffff;
+        font-weight: 800;
+        font-size: 0.65rem;
+        letter-spacing: 1.2px;
+        padding: 3px 8px;
+        border-radius: 6px;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================================================================
+# 5. VERIFIED QUERIES CATALOG & PARAMETER PARSER
+# ==============================================================================
+RAW_VERIFIED_QUERIES = [
+    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
+    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is the average sales by region?", "sql": "SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY average_sales DESC"},
+    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},[cite: 1]
+    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},[cite: 1]
+    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},[cite: 1]
+    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
+    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}[cite: 1]
+]
+
 def normalize_text(text: str) -> str:
     return re.sub(r'[^\w\s]', '', text.lower()).strip()
 
-def generate_sql_with_cortex(prompt: str) -> Tuple[str, Optional[str]]:
+PROCESSED_VERIFIED = []
+for vq in RAW_VERIFIED_QUERIES:
+    PROCESSED_VERIFIED.append({
+        "question": vq["question"],
+        "norm_q": normalize_text(vq["question"]),
+        "sql": vq["sql"].strip()
+    })
+
+def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
     p = prompt.lower().strip()
     norm_p = normalize_text(prompt)
 
-    # 1. Greetings
+    # Friendly greeting
     if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
-        return "Hello! I am your Sales AI Copilot. Ask any question about revenue, orders, customers, products, regions, or time trends!", None
+        return "Hello! I am your Sales Intelligence Assistant. Ask any question about enterprise revenue, customers, catalog items, or time trends.", None
 
-    # 2. Extract Specific Parameters (Year, Region, Channel)
-    # Detect 4-digit years (e.g., 2000, 2005, 2024, 2025, 2026)
+    # Detect 4-digit specific years (e.g. 2000, 2005, 2024, 2025, 2026)
     year_match = re.search(r'\b(19\d\d|20\d\d)\b', p)
     target_year = year_match.group(1) if year_match else None
 
@@ -129,28 +248,21 @@ def generate_sql_with_cortex(prompt: str) -> Tuple[str, Optional[str]]:
     if is_avg:
         metric_agg = "ROUND(AVG(s.total_amount), 2)"
         item_agg = "ROUND(AVG(si.line_total), 2)"
-        metric_label = "average sales"
         alias = "average_sales"
     elif is_count:
         metric_agg = "COUNT(s.order_id)"
         item_agg = "COUNT(si.order_item_id)"
-        metric_label = "order count"
         alias = "order_count"
     else:
         metric_agg = "SUM(s.total_amount)"
         item_agg = "SUM(si.line_total)"
-        metric_label = "total sales"
         alias = "total_sales"
 
-    # --------------------------------------------------------------------------
-    # CASE A: User asked for a SPECIFIC YEAR (e.g., "sales in 2005", "2000 year sales")
-    # --------------------------------------------------------------------------
+    # Specific year queries
     if target_year:
         if "region" in p:
-            sql = f"""
-SELECT
-  c.region,
-  {metric_agg} AS {alias}
+            return f"Sales by region for {target_year}:", f"""
+SELECT c.region, {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
@@ -158,13 +270,10 @@ WHERE d.year = {target_year}
 GROUP BY c.region
 ORDER BY {alias} DESC
             """.strip()
-            return f"Calculating {metric_label} by customer region for year {target_year}:", sql
 
         if any(k in p for k in ["category", "categories"]):
-            sql = f"""
-SELECT
-  p.category,
-  {item_agg} AS {alias}
+            return f"Sales by category for {target_year}:", f"""
+SELECT p.category, {item_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES_ITEM si
 JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
 JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id
@@ -173,165 +282,43 @@ WHERE d.year = {target_year}
 GROUP BY p.category
 ORDER BY {alias} DESC
             """.strip()
-            return f"Calculating {metric_label} by product category for year {target_year}:", sql
 
         if any(k in p for k in ["month", "monthly"]):
-            sql = f"""
-SELECT
-  d.month,
-  d.month_name,
-  {metric_agg} AS {alias}
+            return f"Monthly sales for {target_year}:", f"""
+SELECT d.month, d.month_name, {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 WHERE d.year = {target_year}
 GROUP BY d.month, d.month_name
 ORDER BY d.month ASC
             """.strip()
-            return f"Calculating monthly {metric_label} for year {target_year}:", sql
 
-        # Direct single-year metric (e.g. "sales in 2005", "total sales for year 2005")
-        sql = f"""
-SELECT
-  d.year,
-  {metric_agg} AS {alias}
+        return f"Total sales for year {target_year}:", f"""
+SELECT d.year, {metric_agg} AS {alias}
 FROM CORTEX.MART.FACT_SALES s
 JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 WHERE d.year = {target_year}
 GROUP BY d.year
         """.strip()
-        return f"Calculating {metric_label} for year {target_year}:", sql
 
-    # --------------------------------------------------------------------------
-    # CASE B: Standard Dimensions (No specific year filter)
-    # --------------------------------------------------------------------------
-    # 1. Total Sales Overall
-    if norm_p in ["what is the total sales amount", "total sales", "total sales amount", "what is total sales"]:
-        return "Calculating total sales amount across all orders:", "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"
+    # Exact or verified query matches
+    for vq in PROCESSED_VERIFIED:
+        if norm_p == vq["norm_q"]:
+            return f"Analysis for: **{vq['question']}**", vq["sql"]
 
-    # 2. Customer
-    if "customer" in p and not any(k in p for k in ["region", "industry", "type"]):
-        sql = f"""
-SELECT
-  c.customer_name,
-  {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
-GROUP BY c.customer_name
-ORDER BY {alias} DESC
-LIMIT 15
-        """.strip()
-        return f"Calculating {metric_label} by customer:", sql
+    # Key shortcuts
+    if "total sales" in norm_p and not any(k in norm_p for k in ["region", "customer", "month", "product"]):
+        return "Total gross sales across all transactions:", "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"
+    if "sales by customer" in norm_p:
+        return "Sales grouped by customer:", "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 20"
+    if "sales by region" in norm_p or "by customer region" in norm_p:
+        return "Sales grouped by customer region:", "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"
+    if "top product" in norm_p or "products by sales" in norm_p:
+        return "Top products by sales revenue:", "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"
+    if any(k in norm_p for k in ["year wise", "yearly", "by year", "annual"]):
+        return "Sales trend by year:", "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"
 
-    # 3. Region
-    if "region" in p and not any(k in p for k in ["rep", "sales rep"]):
-        sql = f"""
-SELECT
-  c.region,
-  {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
-GROUP BY c.region
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Calculating {metric_label} by customer region:", sql
-
-    # 4. Products / Top Products
-    if "product" in p and not any(k in p for k in ["category", "brand"]):
-        sql = f"""
-SELECT
-  p.product_name,
-  {item_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM si
-JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
-GROUP BY p.product_name
-ORDER BY {alias} DESC
-LIMIT 10
-        """.strip()
-        return f"Ranking top products by {metric_label}:", sql
-
-    # 5. Product Category
-    if any(k in p for k in ["category", "categories"]):
-        sql = f"""
-SELECT
-  p.category,
-  {item_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM si
-JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
-GROUP BY p.category
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Calculating {metric_label} by product category:", sql
-
-    # 6. Brand
-    if "brand" in p:
-        sql = f"""
-SELECT
-  p.brand,
-  {item_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES_ITEM si
-JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
-GROUP BY p.brand
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Calculating {metric_label} by brand:", sql
-
-    # 7. Year-wise / Yearly trend
-    if any(k in p for k in ["year wise", "yearly", "by year", "annual"]):
-        sql = f"""
-SELECT
-  d.year,
-  {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-GROUP BY d.year
-ORDER BY d.year ASC
-        """.strip()
-        return f"Aggregating {metric_label} across all calendar years:", sql
-
-    # 8. Monthly trend
-    if any(k in p for k in ["month", "monthly"]):
-        sql = f"""
-SELECT
-  d.year,
-  d.month,
-  d.month_name,
-  {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
-GROUP BY d.year, d.month, d.month_name
-ORDER BY d.year, d.month ASC
-        """.strip()
-        return f"Aggregating {metric_label} by month:", sql
-
-    # 9. Channel
-    if "channel" in p:
-        sql = f"""
-SELECT
-  s.order_channel,
-  {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-GROUP BY s.order_channel
-ORDER BY {alias} DESC
-        """.strip()
-        return f"Calculating {metric_label} by order channel:", sql
-
-    # 10. Sales Rep
-    if any(k in p for k in ["rep", "salesperson", "representative"]):
-        sql = f"""
-SELECT
-  r.sales_rep_name,
-  {metric_agg} AS {alias}
-FROM CORTEX.MART.FACT_SALES s
-JOIN CORTEX.MART.DIM_SALES_REP r ON s.sales_rep_id = r.sales_rep_id
-GROUP BY r.sales_rep_name
-ORDER BY {alias} DESC
-LIMIT 10
-        """.strip()
-        return f"Calculating {metric_label} by sales representative:", sql
-
-    # --------------------------------------------------------------------------
-    # CASE C: Fallback to Snowflake Cortex LLM
-    # --------------------------------------------------------------------------
+    # Cortex LLM Generative Fallback
     cortex_instruction = f"""
 You are a Snowflake SQL generator for CORTEX.MART.
 Tables:
@@ -361,100 +348,14 @@ SQL:
             raw_sql = res[0]["SQL_OUT"].strip()
             clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
             if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
-                return f"Semantic SQL generated for: **{prompt}**", clean_sql
+                return f"Analysis query for: **{prompt}**", clean_sql
         except Exception:
             continue
 
-    return "I could not formulate a semantic query for this question. Please specify the metrics or dimensions you wish to analyze.", None
-# ==============================================================================
-# 5. ENLARGED RECTANGULAR RED DILYTICS LOGO
-# ==============================================================================
-DILYTICS_LOGO_HTML = """
-<div style="
-    background-color: #D50000;
-    border-radius: 14px;
-    padding: 16px 20px;
-    display: flex;
-    justify-content: center;
-    align-items: center;
-    box-shadow: 0 6px 18px rgba(213, 0, 0, 0.28);
-    margin: 6px auto 18px auto;
-    width: 100%;
-    max-width: 250px;
-">
-    <span style="
-        color: #FFFFFF;
-        font-family: 'Arial Black', Arial, Helvetica, sans-serif;
-        font-size: 2rem;
-        font-weight: 900;
-        letter-spacing: 3px;
-        text-align: center;
-        line-height: 1;
-    ">DILYTICS</span>
-</div>
-"""
+    return "I could not formulate a query for this question. Please ask about sales revenue, averages, products, customers, or reps.", None
 
 # ==============================================================================
-# 6. CSS STYLING
-# ==============================================================================
-st.markdown("""
-<style>
-    section[data-testid="stSidebar"] {
-        background-color: #ede9fe !important;
-        border-right: 1px solid #ddd6fe !important;
-    }
-    .datetime-pill {
-        display: inline-block;
-        background-color: #6d28d9;
-        color: #f5f3ff;
-        border: 1px solid #7c3aed;
-        border-radius: 12px;
-        padding: 4px 14px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin-bottom: 6px;
-    }
-    .user-pill {
-        display: inline-block;
-        background-color: #ffffff;
-        color: #4c1d95;
-        border: 1px solid #ddd6fe;
-        border-radius: 12px;
-        padding: 4px 14px;
-        font-size: 0.78rem;
-        font-weight: 600;
-        margin-bottom: 8px;
-    }
-    .yaml-pill {
-        display: inline-block;
-        background-color: #047857;
-        color: #ecfdf5;
-        border: 1px solid #059669;
-        border-radius: 12px;
-        padding: 3px 12px;
-        font-size: 0.72rem;
-        font-weight: 600;
-        margin-bottom: 14px;
-    }
-    .chat-group-label {
-        font-size: 0.7rem;
-        font-weight: 700;
-        color: #7c3aed;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-top: 10px;
-        margin-bottom: 4px;
-    }
-    div[data-testid="stButton"] > button {
-        border-radius: 8px;
-        font-weight: 500;
-        transition: all 0.2s ease-in-out;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-# ==============================================================================
-# 7. DOCUMENT PARSERS & DOCUMENT QA
+# 6. DOCUMENT PARSERS & INTERACTIVE Q&A ENGINE
 # ==============================================================================
 def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
     try:
@@ -468,15 +369,14 @@ def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
                 return df
         except Exception:
             pass
-    raise ValueError("Unable to parse Excel file format.")
+    raise ValueError("Could not parse file as tabular spreadsheet.")
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     if pypdf is None:
-        return "PDF text extraction requires pypdf."
+        return "PDF text extraction requires the pypdf library."
     try:
         reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-        text = "".join([page.extract_text() or "" for page in reader.pages])
-        return text.strip()
+        return "".join([page.extract_text() or "" for page in reader.pages]).strip()
     except Exception as exc:
         return f"Error extracting PDF: {str(exc)}"
 
@@ -497,73 +397,93 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     except Exception as exc:
         return f"Error extracting Word document: {str(exc)}"
 
-def generate_comprehensive_summary(text: str, filename: str) -> str:
-    if not text.strip():
-        return "The document contains no readable text."
-    prompt = f"Provide a comprehensive, detailed summary of '{filename}':\n\n{text[:12000]}"
-    for model in ['llama3.1-8b', 'mistral-7b']:
-        try:
-            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS summary", params=[prompt]).collect()
-            ans = res[0]["SUMMARY"]
-            if ans and len(ans.strip()) > 50:
-                return ans
-        except Exception:
-            continue
-    paragraphs = [p.strip() for p in text.split('\n\n') if len(p.strip()) > 30]
-    return "**Extractive Summary:**\n\n" + "\n\n".join([f"• {p}" for p in paragraphs[:6]])
+def answer_user_question_on_document(question: str, doc_context: str, filename: str) -> str:
+    prompt = f"""
+You are an expert data and document analyst assisting a user.
+You are given the extracted content of an uploaded file titled '{filename}'.
+The user is asking a direct question about this file.
 
-def answer_from_document_context(question: str, doc_context: str, filename: str) -> str:
-    prompt = (
-        f"Answer using ONLY the provided text from '{filename}'. "
-        f"If not in the text, reply strictly: 'There is no information regarding this in the uploaded document.'\n\n"
-        f"DOCUMENT:\n{doc_context[:12000]}\n\n"
-        f"QUESTION: {question}\n\nANSWER:"
-    )
+CRITICAL INSTRUCTIONS:
+1. Answer the question thoroughly, accurately, and directly using ONLY the information in the provided document content.
+2. If the user asks for specific values, names, lists, figures, or records, list them clearly.
+3. If the user question CANNOT be answered from the document, respond with:
+   'I checked the uploaded document ({filename}), but could not find information regarding this.'
+
+DOCUMENT CONTENT:
+{doc_context[:16000]}
+
+USER QUESTION: {question}
+
+DETAILED ANSWER:
+"""
     for model in ['llama3.1-8b', 'mistral-7b']:
         try:
             res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", params=[prompt]).collect()
-            return res[0]["ANSWER"]
+            ans = res[0]["ANSWER"].strip()
+            if ans and len(ans) > 10:
+                return ans
         except Exception:
             continue
-    return "There is no information regarding this in the uploaded document."
+
+    # Deterministic line lookup fallback
+    q_words = [w.lower() for w in re.findall(r'\w+', question) if len(w) > 3]
+    matches = [line.strip() for line in doc_context.split('\n') if any(w in line.lower() for w in q_words) and len(line.strip()) > 15]
+    if matches:
+        return f"**Found matching entries in `{filename}`:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:6]])
+    return f"I checked `{filename}`, but could not find information regarding your query."
 
 def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
     uploaded_file.seek(0)
     filename = uploaded_file.name
     file_bytes = uploaded_file.read()
     if not file_bytes:
-        return f"File `{filename}` is empty.", None, None
+        return f"The uploaded file `{filename}` is empty.", None, None
 
     fname_lower = filename.lower()
-    if fname_lower.endswith(".csv"):
-        df = pd.read_csv(io.BytesIO(file_bytes))
-        return f"Loaded CSV `{filename}` with {len(df):,} rows.", df, df.to_string(max_rows=100)
-    elif fname_lower.endswith((".xlsx", ".xls")):
-        df = extract_df_from_xlsx(file_bytes)
-        return f"Loaded Excel `{filename}` with {len(df):,} rows.", df, df.to_string(max_rows=100)
+    if fname_lower.endswith((".csv", ".xlsx", ".xls")):
+        if fname_lower.endswith(".csv"):
+            try:
+                df = pd.read_csv(io.BytesIO(file_bytes))
+            except Exception:
+                df = pd.read_csv(io.BytesIO(file_bytes), encoding='latin1')
+        else:
+            df = extract_df_from_xlsx(file_bytes)
+            
+        context_str = f"File: {filename}\nTotal Rows: {len(df)}\nColumns: {', '.join(df.columns)}\n\nDATA PREVIEW AND RECORDS:\n"
+        context_str += df.to_string(max_rows=250)
+        
+        summary = (
+            f"Successfully processed **`{filename}`** with **{len(df):,} rows** and **{len(df.columns)} columns**.\n\n"
+            f"**Columns:** {', '.join([f'`{col}`' for col in df.columns])}\n\n"
+            f"You can now ask any question about the records, names, or values in this file."
+        )
+        return summary, df, context_str
+        
     elif fname_lower.endswith(".pdf"):
         txt = extract_text_from_pdf(file_bytes)
-        summary = generate_comprehensive_summary(txt, filename)
-        return f"### 📄 Document Analysis: `{filename}`\n\n**Summary:**\n{summary}", None, txt
+        summary = f"Uploaded PDF **`{filename}`** (~{len(txt.split()):,} words). Ready for your questions."
+        return summary, None, txt
+        
     elif fname_lower.endswith((".docx", ".doc")):
         txt = extract_text_from_docx(file_bytes)
-        summary = generate_comprehensive_summary(txt, filename)
-        return f"### 📝 Word Document Analysis: `{filename}`\n\n**Summary:**\n{summary}", None, txt
-    return f"Unsupported file type for `{filename}`.", None, None
+        summary = f"Uploaded Word Document **`{filename}`** (~{len(txt.split()):,} words). Ready for your questions."
+        return summary, None, txt
+        
+    return f"Unsupported format for `{filename}`.", None, None
 
 # ==============================================================================
-# 8. CHART RENDERER
+# 7. CHART RENDERER
 # ==============================================================================
 def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
     if len(df.columns) < 2:
-        st.info("At least 2 columns are required to render visualization.")
+        st.info("At least 2 columns are required to generate visualization.")
         return
     all_cols = list(df.columns)
     col1, col2, col3 = st.columns(3)
-    x_col = col1.selectbox("Dimension (X-axis)", all_cols, index=0, key=f"{key_prefix}_x")
+    x_col = col1.selectbox("Dimension", all_cols, index=0, key=f"{key_prefix}_x")
     remaining = [c for c in all_cols if c != x_col]
-    y_col = col2.selectbox("Metric (Y-axis)", remaining, index=0 if remaining else 0, key=f"{key_prefix}_y")
-    chart_type = col3.selectbox("Chart Type", ["Bar Chart", "Line Chart", "Area Chart", "Scatter Plot"], key=f"{key_prefix}_t")
+    y_col = col2.selectbox("Metric", remaining, index=0 if remaining else 0, key=f"{key_prefix}_y")
+    chart_type = col3.selectbox("Type", ["Bar Chart", "Line Chart", "Area Chart", "Scatter Plot"], key=f"{key_prefix}_t")
     
     chart_df = df.copy()
     if any(k in x_col.lower() for k in ["year", "quarter", "month", "day", "date"]):
@@ -579,26 +499,10 @@ def display_chart_tab(df: pd.DataFrame, key_prefix: str = ""):
         elif chart_type == "Scatter Plot":
             st.scatter_chart(chart_df, x=x_col, y=y_col)
     except Exception as exc:
-        st.error(f"Chart error: {exc}")
+        st.error(f"Chart render error: {exc}")
 
 # ==============================================================================
-# 9. ONBOARDING QUESTIONS SETUP
-# ==============================================================================
-SUGGESTED_QUESTIONS = [
-    {"icon": "💰", "label": "Total Sales", "question": "What is the total sales amount?",
-     "detail": "Calculates gross sales revenue across all completed orders."},
-    {"icon": "👥", "label": "Sales by Customer", "question": "What are the total sales by customer?",
-     "detail": "Ranks customer accounts by gross sales volume."},
-    {"icon": "📦", "label": "Top Products", "question": "What are the top products by sales?",
-     "detail": "Ranks individual catalog products by line-item revenue."},
-    {"icon": "🌍", "label": "Sales by Region", "question": "What are total sales by customer region?",
-     "detail": "Evaluates sales distribution across customer geographic regions."},
-    {"icon": "📅", "label": "Sales in 2000", "question": "What were the total sales in 2000?",
-     "detail": "Filters and calculates total sales specifically for the year 2000."},
-]
-
-# ==============================================================================
-# 10. SESSION STATE MANAGEMENT
+# 8. SESSION STATE SETUP
 # ==============================================================================
 if "chat_sessions" not in st.session_state:
     st.session_state.chat_sessions = {}
@@ -621,41 +525,15 @@ messages = active_session_data["messages"]
 
 logged_in_username = st.session_state.get("username", "admin")
 logged_in_name = st.session_state.get("display_name", "Admin User")
+logged_in_role = st.session_state.get("role", "Administrator")
 
 # ==============================================================================
-# 11. SIDEBAR
+# 9. GEMINI-STYLE SIDEBAR
 # ==============================================================================
 with st.sidebar:
-    st.markdown(DILYTICS_LOGO_HTML, unsafe_allow_html=True)
-
-    st.markdown(
-        f'<div style="text-align:center;">'
-        f'<span class="datetime-pill">📅 {datetime.now().strftime("%b %d, %Y")}</span>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f'<div style="text-align:center;">'
-        f'<span class="user-pill">👤 {logged_in_username} · {logged_in_name}</span>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f'<div style="text-align:center;">'
-        f'<span class="yaml-pill">🔗 Model: Active & Grounded</span>'
-        f'</div>',
-        unsafe_allow_html=True
-    )
-
-    if st.button("🚪 Log Out", use_container_width=True):
-        st.session_state.authenticated = False
-        st.session_state.username = None
-        st.session_state.display_name = None
-        st.rerun()
-
-    if st.button("➕ New Chat", use_container_width=True, type="primary"):
+    # 1. Primary Action: New Chat
+    st.markdown('<div class="new-chat-btn">', unsafe_allow_html=True)
+    if st.button("＋  New chat", use_container_width=True):
         new_id = datetime.now().strftime("%Y%m%d_%H%M%S")
         st.session_state.current_session_id = new_id
         st.session_state.chat_sessions[new_id] = {
@@ -666,83 +544,132 @@ with st.sidebar:
             "doc_name": None
         }
         st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    st.markdown("---")
-    st.markdown("##### 📁 Document Analysis")
-    uploaded_doc = st.file_uploader("Upload a document or report", type=["csv", "xlsx", "xls", "pdf", "docx"], key="doc_uploader")
-    if uploaded_doc is not None:
-        if st.button("⚡ Analyze Document", use_container_width=True, type="secondary"):
-            with st.spinner(f"Analyzing {uploaded_doc.name}..."):
-                analysis_text, extracted_df, raw_context = process_uploaded_document(uploaded_doc)
-                st.session_state.chat_sessions[current_id]["doc_context"] = raw_context
-                st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
-                messages.append({"role": "user", "content": f"📎 Uploaded document: **{uploaded_doc.name}**"})
-                messages.append({"role": "assistant", "content": analysis_text, "sql": None, "data": extracted_df})
-                st.rerun()
+    st.markdown("<br>", unsafe_allow_html=True)
 
-    st.markdown("---")
-    search_term = st.text_input("🔍 Search chats", key="chat_search", placeholder="Search by title...")
-    today = datetime.now().date()
-    sessions_sorted = sorted(st.session_state.chat_sessions.items(), key=lambda kv: kv[1].get("created_at", datetime.now()), reverse=True)
-    if search_term:
-        sessions_sorted = [(sid, sd) for sid, sd in sessions_sorted if search_term.lower() in sd["title"].lower()]
+    # 2. Document Analysis (Collapsible & Clean)
+    with st.expander("📎  Upload document", expanded=active_session_data.get("doc_name") is None):
+        uploaded_doc = st.file_uploader(
+            "Spreadsheet or file",
+            type=["csv", "xlsx", "xls", "pdf", "docx"],
+            key="doc_uploader",
+            label_visibility="collapsed"
+        )
+        if uploaded_doc is not None:
+            if st.button("Analyze & Load to Chat", use_container_width=True, type="secondary"):
+                with st.spinner("Processing file..."):
+                    summary_text, extracted_df, full_context = process_uploaded_document(uploaded_doc)
+                    
+                    st.session_state.chat_sessions[current_id]["doc_context"] = full_context
+                    st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
+                    
+                    messages.append({"role": "user", "content": f"📎 Uploaded **{uploaded_doc.name}** for analysis."})
+                    messages.append({"role": "assistant", "content": summary_text, "sql": None, "data": extracted_df})
+                    if len(messages) == 2:
+                        st.session_state.chat_sessions[current_id]["title"] = f"Doc: {uploaded_doc.name[:16]}"
+                    st.rerun()
 
+    # Active Document Notification
+    if active_session_data.get("doc_name"):
+        st.caption(f"Active file: **{active_session_data['doc_name']}**")
+
+    st.markdown("<hr style='margin: 16px 0; border: 0; border-top: 1px solid #e5e7eb;'>", unsafe_allow_html=True)
+    
+    # 3. Conversation History
+    st.markdown("<div style='font-size: 0.76rem; font-weight: 600; color: #6b7280; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px;'>Recent</div>", unsafe_allow_html=True)
+    
+    sessions_sorted = sorted(
+        st.session_state.chat_sessions.items(),
+        key=lambda kv: kv[1].get("created_at", datetime.now()),
+        reverse=True
+    )
     for s_id, s_data in sessions_sorted:
         is_active = (s_id == st.session_state.current_session_id)
-        label = s_data["title"][:16] + "..." if len(s_data["title"]) > 16 else s_data["title"]
-        if st.button(f"{'👉 ' if is_active else '🗨️ '}{label}", key=f"sess_{s_id}", use_container_width=True):
+        title_text = s_data["title"][:22] + "..." if len(s_data["title"]) > 22 else s_data["title"]
+        icon = "💬" if not is_active else "👉"
+        if st.button(f"{icon}  {title_text}", key=f"hist_{s_id}", use_container_width=True):
             st.session_state.current_session_id = s_id
             st.rerun()
 
-    st.markdown("---")
-    if st.button("🗑️ Clear History", use_container_width=True):
-        st.session_state.chat_sessions = {}
-        init_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.session_state.current_session_id = init_id
-        st.session_state.chat_sessions[init_id] = {"title": "New Conversation", "messages": [], "created_at": datetime.now(), "doc_context": None, "doc_name": None}
+    if len(st.session_state.chat_sessions) > 1:
+        if st.button("Clear all chats", use_container_width=True):
+            st.session_state.chat_sessions = {}
+            init_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+            st.session_state.current_session_id = init_id
+            st.session_state.chat_sessions[init_id] = {
+                "title": "New Conversation",
+                "messages": [],
+                "created_at": datetime.now(),
+                "doc_context": None,
+                "doc_name": None
+            }
+            st.rerun()
+
+    # 4. Pinned Bottom Profile & DILYTICS Brand Card
+    st.markdown("<div style='margin-top: 50px;'></div>", unsafe_allow_html=True)
+    st.markdown(f"""
+    <div class="user-footer-card">
+        <div>
+            <div style="font-weight: 600; font-size: 0.88rem; color: #111827;">{logged_in_name}</div>
+            <div style="font-size: 0.75rem; color: #6b7280;">@{logged_in_username} · {logged_in_role}</div>
+        </div>
+        <span class="brand-dilytics">DILYTICS</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    if st.button("Log out", use_container_width=True):
+        st.session_state.authenticated = False
+        st.session_state.username = None
+        st.session_state.display_name = None
         st.rerun()
 
 # ==============================================================================
-# 12. MAIN AREA
+# 10. MAIN CHAT WORKSPACE
 # ==============================================================================
-st.title("💬 Sales AI Copilot")
-st.caption("Accurate Semantic Intelligence powered by Snowflake Cortex")
+st.markdown('<div class="gemini-header-title">✨ Sales Copilot</div>', unsafe_allow_html=True)
+st.markdown('<div class="gemini-header-sub">Ask questions in natural language across your data mart and uploaded files</div>', unsafe_allow_html=True)
 
-st.markdown("##### 💡 Verified Onboarding Questions:")
-cols = st.columns(len(SUGGESTED_QUESTIONS))
-for col, q in zip(cols, SUGGESTED_QUESTIONS):
+# Quick Questions
+onboarding_pills = [
+    ("Total Sales", "What is the total sales amount?"),
+    ("Sales by Customer", "What are the total sales by customer?"),
+    ("Top Products", "What are the top products by sales?"),
+    ("Sales by Region", "What are total sales by customer region?"),
+    ("Sales in 2000", "What were the total sales in 2000?")
+]
+pill_cols = st.columns(len(onboarding_pills))
+for col, (label, question) in zip(pill_cols, onboarding_pills):
     with col:
-        with st.popover(f"{q['icon']} {q['label']}", use_container_width=True):
-            st.markdown(f"**{q['question']}**")
-            st.caption(q["detail"])
-            if st.button("Ask this question", key=f"ask_{q['label']}", use_container_width=True, type="primary"):
-                st.session_state.pending_question = q["question"]
-                st.rerun()
+        if st.button(label, key=f"pill_{label}", use_container_width=True):
+            st.session_state.pending_question = question
+            st.rerun()
 
-st.divider()
+st.markdown("<hr style='margin: 12px 0 24px 0; border: 0; border-top: 1px solid #f3f4f6;'>", unsafe_allow_html=True)
 
+# Render Chat History
 for idx, msg in enumerate(messages):
     with st.chat_message(msg["role"]):
         st.markdown(msg["content"])
         if msg.get("sql"):
-            with st.expander("Generated Semantic SQL", expanded=False):
+            with st.expander("Generated SQL Query", expanded=False):
                 st.code(msg["sql"], language="sql")
         if msg.get("data") is not None and not msg["data"].empty:
-            tab_data, tab_chart = st.tabs(["Data 📄", "Chart 📈"])
+            tab_data, tab_chart = st.tabs(["Data Table 📄", "Visualization 📈"])
             with tab_data:
                 st.dataframe(msg["data"], use_container_width=True)
             with tab_chart:
                 display_chart_tab(msg["data"], key_prefix=f"hist_{current_id}_{idx}")
 
-# Handle Chat Input
-user_prompt = st.chat_input("Ask a question about sales, products, reps, dates, or channels...")
+# Chat Input & Routing
+user_prompt = st.chat_input("Ask a question about sales, products, trends, or your uploaded file...")
 if st.session_state.pending_question:
     user_prompt = st.session_state.pending_question
     st.session_state.pending_question = None
 
 if user_prompt:
     if len(messages) == 0:
-        st.session_state.chat_sessions[current_id]["title"] = user_prompt[:25] + ("..." if len(user_prompt) > 25 else "")
+        st.session_state.chat_sessions[current_id]["title"] = user_prompt[:26] + ("..." if len(user_prompt) > 26 else "")
     
     messages.append({"role": "user", "content": user_prompt})
     with st.chat_message("user"):
@@ -752,52 +679,50 @@ if user_prompt:
         doc_ctx = st.session_state.chat_sessions[current_id].get("doc_context")
         doc_fname = st.session_state.chat_sessions[current_id].get("doc_name")
         
-        is_doc_query = doc_ctx is not None and any(k in user_prompt.lower() for k in ["document", "file", "uploaded", "docx", "pdf", "sheet", "summary"])
-        
-        if is_doc_query:
+        response_text = ""
+        sql_query = None
+        df_result = None
+
+        # Tier 1: Check active document in the current session
+        answered_from_doc = False
+        if doc_ctx:
             with st.spinner(f"Analyzing `{doc_fname}`..."):
-                answer = answer_from_document_context(user_prompt, doc_ctx, doc_fname)
-                st.markdown(answer)
-                messages.append({"role": "assistant", "content": answer, "sql": None, "data": None})
-        else:
-            with st.spinner("Processing query..."):
-                explanation, sql_query = generate_sql_with_cortex(user_prompt)
-                df = None
+                doc_ans = answer_user_question_on_document(user_prompt, doc_ctx, doc_fname)
+                if not doc_ans.startswith(f"I checked the uploaded document ({doc_fname}), but could not find"):
+                    response_text = doc_ans
+                    st.markdown(response_text)
+                    answered_from_doc = True
+
+        # Tier 2: Route to Snowflake Data Mart if not answered by document
+        if not answered_from_doc:
+            with st.spinner("Analyzing question..."):
+                explanation, sql_query = generate_sql_for_database(user_prompt)
                 
                 if sql_query:
                     st.markdown(explanation)
-                    with st.expander("Generated Semantic SQL", expanded=False):
+                    response_text = explanation
+                    with st.expander("Generated SQL Query", expanded=False):
                         st.code(sql_query, language="sql")
                     try:
-                        df = session.sql(sql_query).to_pandas()
-                        if df is not None and not df.empty:
-                            tab_data, tab_chart = st.tabs(["Data 📄", "Chart 📈"])
+                        df_result = session.sql(sql_query).to_pandas()
+                        if df_result is not None and not df_result.empty:
+                            tab_data, tab_chart = st.tabs(["Data Table 📄", "Visualization 📈"])
                             with tab_data:
-                                st.dataframe(df, use_container_width=True)
+                                st.dataframe(df_result, use_container_width=True)
                             with tab_chart:
-                                display_chart_tab(df, key_prefix=f"live_{current_id}")
+                                display_chart_tab(df_result, key_prefix=f"live_{current_id}")
                         else:
-                            st.info("The query returned no data.")
+                            st.info("The query executed successfully but returned no records.")
                     except Exception as e:
-                        st.error(f"SQL Execution Error: {str(e)}")
-                elif explanation:
-                    st.markdown(explanation)
-                elif doc_ctx:
-                    answer = answer_from_document_context(user_prompt, doc_ctx, doc_fname)
-                    st.markdown(answer)
-                    explanation = answer
+                        st.error(f"Query execution error: {str(e)}")
                 else:
-                    fallback_text = (
-                        "I could not formulate a semantic query for this question. "
-                        "Please ask about sales revenue, averages, products, customers, or reps."
-                    )
-                    st.markdown(fallback_text)
-                    explanation = fallback_text
+                    response_text = explanation
+                    st.markdown(response_text)
 
-                messages.append({
-                    "role": "assistant",
-                    "content": explanation,
-                    "sql": sql_query,
-                    "data": df
-                })
-        st.rerun()
+        messages.append({
+            "role": "assistant",
+            "content": response_text,
+            "sql": sql_query,
+            "data": df_result
+        })
+    st.rerun()
