@@ -191,27 +191,24 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==============================================================================
-# 5. VERIFIED QUERIES & DYNAMIC DATA MART ENGINE
+# 5. VERIFIED QUERIES & DATA MART ENGINE
 # ==============================================================================
 RAW_VERIFIED_QUERIES = [
-    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},
-    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},
-    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},
-    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},
+    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
+    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},[cite: 1]
     {"question": "What is the average sales by region?", "sql": "SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY average_sales DESC"},
-    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},
-    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},
-    {"question": "What were the total sales by customer region in 2025?", "sql": "SELECT c.region, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2025 GROUP BY c.region ORDER BY total_sales DESC"},
-    {"question": "What were the total sales by product category in 2025?", "sql": "SELECT p.category, SUM(si.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM si JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2025 GROUP BY p.category ORDER BY total_sales DESC"},
-    {"question": "What were the monthly sales in 2025?", "sql": "SELECT d.month, d.month_name, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2025 GROUP BY d.month, d.month_name ORDER BY d.month"},
-    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},
-    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},
-    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},
-    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},
-    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},
-    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},
-    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},
-    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}
+    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},[cite: 1]
+    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},[cite: 1]
+    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},[cite: 1]
+    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
+    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}[cite: 1]
 ]
 
 def normalize_text(text: str) -> str:
@@ -344,7 +341,7 @@ SQL:
     return "I could not formulate a query for this question. Please ask about sales revenue, averages, products, customers, or reps.", None
 
 # ==============================================================================
-# 6. DOCUMENT INTELLIGENCE & FOLLOW-UP Q&A
+# 6. ENHANCED DOCUMENT INTELLIGENCE & ACCURATE TABULAR QA
 # ==============================================================================
 def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
     try:
@@ -386,19 +383,59 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     except Exception as exc:
         return f"Error extracting Word document: {str(exc)}"
 
-def answer_user_question_on_document(question: str, doc_context: str, filename: str) -> Optional[str]:
+def answer_user_question_on_document(question: str, doc_context: str, filename: str, df: Optional[pd.DataFrame] = None) -> Optional[str]:
+    q_lower = question.lower().strip()
+
+    # Priority 1: High-Accuracy Pandas Tabular Lookup
+    if df is not None and not df.empty:
+        # Ignore common query terms to extract actual entity keywords
+        stop_words = {
+            "what", "is", "the", "are", "sales", "for", "total", "average", "avg", 
+            "count", "show", "give", "list", "of", "in", "by", "all", "me", "find"
+        }
+        words = [w for w in re.findall(r'\b[a-zA-Z0-9_]+\b', q_lower) if len(w) > 2 and w not in stop_words]
+        
+        mask = pd.Series(False, index=df.index)
+        for col in df.columns:
+            for word in words:
+                mask = mask | df[col].astype(str).str.lower().str.contains(r'\b' + re.escape(word) + r'\b', na=False)
+        
+        matched_df = df[mask]
+        
+        if not matched_df.empty:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            sales_cols = [c for c in numeric_cols if any(k in c.lower() for k in ["sale", "amount", "revenue", "total", "val"])]
+            target_metric_col = sales_cols[0] if sales_cols else (numeric_cols[0] if numeric_cols else None)
+
+            if target_metric_col:
+                total_val = matched_df[target_metric_col].sum()
+                avg_val = matched_df[target_metric_col].mean()
+                count_val = len(matched_df)
+                
+                matched_entity = ' '.join(words).title() if words else "the requested entity"
+
+                if any(k in q_lower for k in ["average", "avg", "mean"]):
+                    return f"In **`{filename}`**, the average **{target_metric_col}** for **{matched_entity}** is **{avg_val:,.2f}** ({count_val} matching records found)."
+                else:
+                    return f"In **`{filename}`**, the total **{target_metric_col}** for **{matched_entity}** is **{total_val:,.2f}** ({count_val} matching records found)."
+            else:
+                preview = matched_df.dropna(how='all', axis=1).head(10)
+                return f"Found **{len(matched_df)}** matching records in **`{filename}`**:\n\n" + preview.to_markdown(index=False)
+
+    # Priority 2: Generative Cortex QA with Document Context
     prompt = f"""
-You are an expert data analyst answering a user's question regarding an uploaded document titled '{filename}'.
+You are an expert data and business analyst answering questions regarding the file '{filename}'.
 
-DOCUMENT CONTENT:
-{doc_context[:16000]}
+DATA CONTENT:
+{doc_context[:10000]}
 
-USER QUESTION: {question}
+USER QUESTION:
+{question}
 
 INSTRUCTIONS:
-1. If the question asks about data, records, names, departments, figures, or facts present in the document content above, answer thoroughly and concisely.
-2. If the user question is COMPLETELY UNRELATED to the document (for example, general database sales queries like 'what is total sales in 2000' when this document is an HR employee list), respond EXACTLY with the token:
-   UNRELATED_TO_DOCUMENT
+1. Provide a direct, concise, and factual answer using only the figures, facts, and records from the data above.
+2. If the user asks for a specific metric (such as county sales, employee name, or list), provide that exact value.
+3. If this question has NOTHING to do with the document above (e.g. general questions about a database not present in the text), reply EXACTLY with the token: UNRELATED_TO_DOCUMENT.
 
 ANSWER:
 """
@@ -408,15 +445,11 @@ ANSWER:
             ans = res[0]["ANSWER"].strip()
             if "UNRELATED_TO_DOCUMENT" in ans:
                 return None
-            if ans and len(ans) > 5:
+            if ans and len(ans) > 2:
                 return ans
         except Exception:
             continue
 
-    q_words = [w.lower() for w in re.findall(r'\w+', question) if len(w) > 3]
-    matches = [line.strip() for line in doc_context.split('\n') if any(w in line.lower() for w in q_words) and len(line.strip()) > 15]
-    if matches:
-        return f"**Found matching entries in `{filename}`:**\n\n" + "\n\n".join([f"• {m}" for m in matches[:6]])
     return None
 
 def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
@@ -436,15 +469,16 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         else:
             df = extract_df_from_xlsx(file_bytes)
             
-        context_str = f"File: {filename}\nTotal Rows: {len(df)}\nColumns: {', '.join(df.columns)}\n\nDATA PREVIEW AND RECORDS:\n"
-        context_str += df.to_string(max_rows=300)
+        clean_df = df.dropna(how='all')
+        context_str = f"File: {filename}\nTotal Rows: {len(clean_df)}\nColumns: {', '.join(clean_df.columns)}\n\nDATA PREVIEW AND RECORDS:\n"
+        context_str += clean_df.to_string(max_rows=150)
         
         summary = (
-            f"Successfully processed **`{filename}`** with **{len(df):,} rows** and **{len(df.columns)} columns**.\n\n"
-            f"**Columns:** {', '.join([f'`{col}`' for col in df.columns])}\n\n"
+            f"Successfully processed **`{filename}`** with **{len(clean_df):,} rows** and **{len(clean_df.columns)} columns**.\n\n"
+            f"**Columns:** {', '.join([f'`{col}`' for col in clean_df.columns])}\n\n"
             f"You can now ask any follow-up question about the records, names, or values in this file."
         )
-        return summary, df, context_str
+        return summary, clean_df, context_str
         
     elif fname_lower.endswith(".pdf"):
         txt = extract_text_from_pdf(file_bytes)
@@ -501,7 +535,8 @@ if "current_session_id" not in st.session_state:
         "messages": [],
         "created_at": datetime.now(),
         "doc_context": None,
-        "doc_name": None
+        "doc_name": None,
+        "doc_df": None
     }
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = None
@@ -527,7 +562,8 @@ with st.sidebar:
             "messages": [],
             "created_at": datetime.now(),
             "doc_context": None,
-            "doc_name": None
+            "doc_name": None,
+            "doc_df": None
         }
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
@@ -548,6 +584,7 @@ with st.sidebar:
                     
                     st.session_state.chat_sessions[current_id]["doc_context"] = full_context
                     st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
+                    st.session_state.chat_sessions[current_id]["doc_df"] = extracted_df
                     
                     messages.append({"role": "user", "content": f"📎 Uploaded **{uploaded_doc.name}** for analysis."})
                     messages.append({"role": "assistant", "content": summary_text, "sql": None, "data": extracted_df})
@@ -585,7 +622,8 @@ with st.sidebar:
                 "messages": [],
                 "created_at": datetime.now(),
                 "doc_context": None,
-                "doc_name": None
+                "doc_name": None,
+                "doc_df": None
             }
             st.rerun()
 
@@ -657,22 +695,23 @@ if user_prompt:
     with st.chat_message("assistant"):
         doc_ctx = st.session_state.chat_sessions[current_id].get("doc_context")
         doc_fname = st.session_state.chat_sessions[current_id].get("doc_name")
+        doc_df = st.session_state.chat_sessions[current_id].get("doc_df")
         
         response_text = ""
         sql_query = None
         df_result = None
         answered_from_doc = False
 
-        # Priority 1: Check against uploaded file in the active conversation
+        # Priority 1: Answer from uploaded file active in current session
         if doc_ctx:
-            with st.spinner(f"Searching `{doc_fname}`..."):
-                doc_ans = answer_user_question_on_document(user_prompt, doc_ctx, doc_fname)
+            with st.spinner(f"Analyzing `{doc_fname}`..."):
+                doc_ans = answer_user_question_on_document(user_prompt, doc_ctx, doc_fname, df=doc_df)
                 if doc_ans is not None:
                     response_text = doc_ans
                     st.markdown(response_text)
                     answered_from_doc = True
 
-        # Priority 2: Fall back to Snowflake Data Mart if not answered by document
+        # Priority 2: Fall back to Snowflake Data Mart if unrelated to document
         if not answered_from_doc:
             with st.spinner("Analyzing data mart..."):
                 explanation, sql_query = generate_sql_for_database(user_prompt)
