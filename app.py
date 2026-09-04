@@ -381,11 +381,9 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
 
     # Priority 1: Direct High-Accuracy Pandas Tabular Analytics
     if df is not None and not df.empty:
-        # 1. Identify which column(s) match the user's question
         col_map = {col.lower().strip(): col for col in df.columns}
         matched_target_col = None
         for c_lower, c_orig in col_map.items():
-            # Check for singular/plural matching (e.g. city -> cities, district -> districts)
             stem = c_lower.rstrip('s')
             if stem in q_lower or (stem.endswith('y') and stem[:-1] + 'ies' in q_lower):
                 matched_target_col = c_orig
@@ -394,7 +392,6 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
         is_count_query = any(k in q_lower for k in ["how many", "count", "number of", "total", "distinct", "unique"])
         is_list_query = any(k in q_lower for k in ["list", "what are", "show", "names of", "give me"])
 
-        # Case A: User asked about count/total of a specific column (e.g. "how many total city", "how many district we have total")
         if matched_target_col and is_count_query:
             valid_entries = df[matched_target_col].dropna()
             valid_entries = valid_entries[valid_entries.astype(str).str.strip().str.lower() != 'none']
@@ -412,7 +409,6 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
                 f"**Entries:** {sample_str}"
             )
 
-        # Case B: User asked to list values of a column (e.g. "list all cities", "what are the districts")
         if matched_target_col and is_list_query:
             valid_entries = df[matched_target_col].dropna()
             valid_entries = valid_entries[valid_entries.astype(str).str.strip().str.lower() != 'none']
@@ -420,7 +416,6 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
             val_bullets = "\n".join([f"• {str(v)}" for v in unique_vals])
             return f"**List of {matched_target_col}s in `{filename}` ({len(unique_vals)} unique):**\n\n{val_bullets}"
 
-        # Case C: Filtering rows based on specific entity values (e.g. "Hyderabad", "Warangal", "Sonoma")
         words = [w for w in re.findall(r'\b[a-zA-Z0-9_]+\b', q_lower) if len(w) > 2 and w not in [
             "what", "is", "the", "are", "sales", "for", "total", "average", "avg", 
             "count", "show", "give", "list", "of", "in", "by", "all", "me", "find",
@@ -571,6 +566,9 @@ if "current_session_id" not in st.session_state:
 if "pending_question" not in st.session_state:
     st.session_state.pending_question = None
 
+if "selected_source_mode" not in st.session_state:
+    st.session_state.selected_source_mode = "❄️ Snowflake Data Mart"
+
 current_id = st.session_state.current_session_id
 active_session_data = st.session_state.chat_sessions[current_id]
 messages = active_session_data["messages"]
@@ -595,6 +593,7 @@ with st.sidebar:
             "doc_name": None,
             "doc_df": None
         }
+        st.session_state.selected_source_mode = "❄️ Snowflake Data Mart"
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -615,6 +614,7 @@ with st.sidebar:
                     st.session_state.chat_sessions[current_id]["doc_context"] = full_context
                     st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
                     st.session_state.chat_sessions[current_id]["doc_df"] = extracted_df
+                    st.session_state.selected_source_mode = f"📄 Document: {uploaded_doc.name[:18]}..."
                     
                     messages.append({
                         "role": "user",
@@ -664,6 +664,7 @@ with st.sidebar:
                 "doc_name": None,
                 "doc_df": None
             }
+            st.session_state.selected_source_mode = "❄️ Snowflake Data Mart"
             st.rerun()
 
     st.markdown("<div style='margin-top: 50px;'></div>", unsafe_allow_html=True)
@@ -701,10 +702,13 @@ for col, (label, question) in zip(pill_cols, onboarding_pills):
     with col:
         if st.button(label, key=f"pill_{label}", use_container_width=True):
             st.session_state.pending_question = question
+            # Ensure asking a suggested mart question routes to Snowflake Data Mart
+            st.session_state.selected_source_mode = "❄️ Snowflake Data Mart"
             st.rerun()
 
 st.markdown("<hr style='margin: 12px 0 20px 0; border: 0; border-top: 1px solid #f3f4f6;'>", unsafe_allow_html=True)
 
+# Render Chat History
 for idx, msg in enumerate(messages):
     with st.chat_message(msg["role"]):
         if msg.get("source"):
@@ -722,18 +726,30 @@ for idx, msg in enumerate(messages):
             with tab_chart:
                 display_chart_tab(msg["data"], key_prefix=f"hist_{current_id}_{idx}")
 
+# Interactive Source Toggle with Session Persistence
 has_active_doc = active_session_data.get("doc_name") is not None
 active_file_name = active_session_data.get("doc_name", "")
 doc_choice_label = f"📄 Document: {active_file_name[:20]}..." if has_active_doc else "📄 Document (Upload in sidebar)"
 
-mode_col, _ = st.columns([3, 3])
+available_modes = ["❄️ Snowflake Data Mart", doc_choice_label]
+
+# Synchronize session state choice
+if st.session_state.selected_source_mode not in available_modes:
+    st.session_state.selected_source_mode = available_modes[0]
+
+mode_col, _ = st.columns([3.5, 2.5])
 with mode_col:
+    def on_source_change():
+        st.session_state.selected_source_mode = st.session_state.source_mode_radio
+
     query_target = st.radio(
         "Select target data source",
-        options=["❄️ Snowflake Data Mart", doc_choice_label],
-        index=1 if has_active_doc else 0,
+        options=available_modes,
+        index=available_modes.index(st.session_state.selected_source_mode),
         horizontal=True,
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        key="source_mode_radio",
+        on_change=on_source_change
     )
 
 user_prompt = st.chat_input("Ask a question about sales, products, trends, or your uploaded file...")
@@ -759,7 +775,7 @@ if user_prompt:
         df_result = None
         source_label = ""
 
-        # Branch 1: Explicitly routed to Document
+        # Branch 1: User explicitly routed to Document
         if "📄 Document" in query_target:
             if not has_active_doc:
                 response_text = "No document is currently active in this conversation. Please upload a spreadsheet or file in the sidebar, or switch the toggle to **❄️ Snowflake Data Mart**."
@@ -772,7 +788,7 @@ if user_prompt:
                     st.markdown(f'<span class="source-badge badge-doc">📌 Source: {source_label}</span>', unsafe_allow_html=True)
                     st.markdown(response_text)
 
-        # Branch 2: Explicitly routed to Snowflake Data Mart
+        # Branch 2: User explicitly routed to Snowflake Data Mart
         else:
             source_label = "Snowflake Data Mart (CORTEX.MART)"
             with st.spinner("Analyzing Snowflake Data Mart..."):
