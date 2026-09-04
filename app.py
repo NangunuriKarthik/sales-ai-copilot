@@ -167,6 +167,25 @@ st.markdown("""
         color: #1f2937;
     }
 
+    .source-badge {
+        display: inline-block;
+        font-size: 0.73rem;
+        font-weight: 600;
+        padding: 2px 10px;
+        border-radius: 12px;
+        margin-bottom: 8px;
+    }
+    .badge-snowflake {
+        background-color: #e0f2fe;
+        color: #0369a1;
+        border: 1px solid #bae6fd;
+    }
+    .badge-doc {
+        background-color: #fef3c7;
+        color: #b45309;
+        border: 1px solid #fde68a;
+    }
+
     .user-footer-card {
         background: #ffffff;
         border: 1px solid #e5e7eb;
@@ -194,21 +213,21 @@ st.markdown("""
 # 5. VERIFIED QUERIES & DATA MART ENGINE
 # ==============================================================================
 RAW_VERIFIED_QUERIES = [
-    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},
-    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},
-    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},
-    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},
+    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
+    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},[cite: 1]
     {"question": "What is the average sales by region?", "sql": "SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY average_sales DESC"},
-    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},
-    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},
-    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},
-    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},
-    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},
-    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},
-    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},
-    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},
-    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},
-    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}
+    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},[cite: 1]
+    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},[cite: 1]
+    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},[cite: 1]
+    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},[cite: 1]
+    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
+    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}[cite: 1]
 ]
 
 def normalize_text(text: str) -> str:
@@ -386,11 +405,12 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
 def answer_user_question_on_document(question: str, doc_context: str, filename: str, df: Optional[pd.DataFrame] = None) -> Optional[str]:
     q_lower = question.lower().strip()
 
-    # Priority 1: High-Accuracy Pandas Tabular Lookup
+    # Priority 1: Direct High-Accuracy Pandas Tabular Filtering & Aggregation
     if df is not None and not df.empty:
         stop_words = {
             "what", "is", "the", "are", "sales", "for", "total", "average", "avg", 
-            "count", "show", "give", "list", "of", "in", "by", "all", "me", "find"
+            "count", "show", "give", "list", "of", "in", "by", "all", "me", "find",
+            "county", "state", "city", "value"
         }
         words = [w for w in re.findall(r'\b[a-zA-Z0-9_]+\b', q_lower) if len(w) > 2 and w not in stop_words]
         
@@ -410,7 +430,6 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
                 total_val = matched_df[target_metric_col].sum()
                 avg_val = matched_df[target_metric_col].mean()
                 count_val = len(matched_df)
-                
                 matched_entity = ' '.join(words).title() if words else "the requested entity"
 
                 if any(k in q_lower for k in ["average", "avg", "mean"]):
@@ -434,7 +453,8 @@ USER QUESTION:
 INSTRUCTIONS:
 1. Provide a direct, concise, and factual answer using only the figures, facts, and records from the data above.
 2. If the user asks for a specific metric (such as county sales, employee name, or list), provide that exact value.
-3. If this question has NOTHING to do with the document above (e.g. general questions about a database not present in the text), reply EXACTLY with the token: UNRELATED_TO_DOCUMENT.
+3. If this question cannot be answered from the document above, reply:
+   'The uploaded document does not contain information regarding this query.'
 
 ANSWER:
 """
@@ -442,14 +462,12 @@ ANSWER:
         try:
             res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', ?) AS answer", params=[prompt]).collect()
             ans = res[0]["ANSWER"].strip()
-            if "UNRELATED_TO_DOCUMENT" in ans:
-                return None
             if ans and len(ans) > 2:
                 return ans
         except Exception:
             continue
 
-    return None
+    return f"The uploaded document (`{filename}`) does not contain information to answer this query."
 
 def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
     uploaded_file.seek(0)
@@ -475,7 +493,7 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         summary = (
             f"Successfully processed **`{filename}`** with **{len(clean_df):,} rows** and **{len(clean_df.columns)} columns**.\n\n"
             f"**Columns:** {', '.join([f'`{col}`' for col in clean_df.columns])}\n\n"
-            f"You can now ask any follow-up question about the records, names, or values in this file."
+            f"You can now ask questions about the records, values, or metrics in this file."
         )
         return summary, clean_df, context_str
         
@@ -585,8 +603,17 @@ with st.sidebar:
                     st.session_state.chat_sessions[current_id]["doc_name"] = uploaded_doc.name
                     st.session_state.chat_sessions[current_id]["doc_df"] = extracted_df
                     
-                    messages.append({"role": "user", "content": f"📎 Uploaded **{uploaded_doc.name}** for analysis."})
-                    messages.append({"role": "assistant", "content": summary_text, "sql": None, "data": extracted_df})
+                    messages.append({
+                        "role": "user",
+                        "content": f"📎 Uploaded **{uploaded_doc.name}** for analysis."
+                    })
+                    messages.append({
+                        "role": "assistant",
+                        "content": summary_text,
+                        "source": f"File: {uploaded_doc.name}",
+                        "sql": None,
+                        "data": extracted_df
+                    })
                     if len(messages) == 2:
                         st.session_state.chat_sessions[current_id]["title"] = f"Doc: {uploaded_doc.name[:16]}"
                     st.rerun()
@@ -663,10 +690,15 @@ for col, (label, question) in zip(pill_cols, onboarding_pills):
             st.session_state.pending_question = question
             st.rerun()
 
-st.markdown("<hr style='margin: 12px 0 24px 0; border: 0; border-top: 1px solid #f3f4f6;'>", unsafe_allow_html=True)
+st.markdown("<hr style='margin: 12px 0 20px 0; border: 0; border-top: 1px solid #f3f4f6;'>", unsafe_allow_html=True)
 
+# Render Chat History
 for idx, msg in enumerate(messages):
     with st.chat_message(msg["role"]):
+        if msg.get("source"):
+            source_class = "badge-snowflake" if "Snowflake" in msg["source"] else "badge-doc"
+            st.markdown(f'<span class="source-badge {source_class}">📌 Source: {msg["source"]}</span>', unsafe_allow_html=True)
+            
         st.markdown(msg["content"])
         if msg.get("sql"):
             with st.expander("Generated SQL Query", expanded=False):
@@ -677,6 +709,21 @@ for idx, msg in enumerate(messages):
                 st.dataframe(msg["data"], use_container_width=True)
             with tab_chart:
                 display_chart_tab(msg["data"], key_prefix=f"hist_{current_id}_{idx}")
+
+# Interactive Source Toggle
+has_active_doc = active_session_data.get("doc_name") is not None
+active_file_name = active_session_data.get("doc_name", "")
+doc_choice_label = f"📄 Document: {active_file_name[:20]}..." if has_active_doc else "📄 Document (Upload in sidebar)"
+
+mode_col, _ = st.columns([3, 3])
+with mode_col:
+    query_target = st.radio(
+        "Select target data source",
+        options=["❄️ Snowflake Data Mart", doc_choice_label],
+        index=1 if has_active_doc else 0,
+        horizontal=True,
+        label_visibility="collapsed"
+    )
 
 user_prompt = st.chat_input("Ask a question about sales, products, trends, or your uploaded file...")
 if st.session_state.pending_question:
@@ -699,22 +746,28 @@ if user_prompt:
         response_text = ""
         sql_query = None
         df_result = None
-        answered_from_doc = False
+        source_label = ""
 
-        # Priority 1: Answer from uploaded file active in current session
-        if doc_ctx:
-            with st.spinner(f"Analyzing `{doc_fname}`..."):
-                doc_ans = answer_user_question_on_document(user_prompt, doc_ctx, doc_fname, df=doc_df)
-                if doc_ans is not None:
-                    response_text = doc_ans
+        # Branch 1: User explicitly routed to the Document
+        if "📄 Document" in query_target:
+            if not has_active_doc:
+                response_text = "No document is currently active in this conversation. Please upload a spreadsheet or file in the sidebar, or switch the toggle to **❄️ Snowflake Data Mart**."
+                st.warning(response_text)
+                source_label = "Document Query (No file attached)"
+            else:
+                source_label = f"File: {doc_fname}"
+                with st.spinner(f"Analyzing `{doc_fname}`..."):
+                    response_text = answer_user_question_on_document(user_prompt, doc_ctx, doc_fname, df=doc_df)
+                    st.markdown(f'<span class="source-badge badge-doc">📌 Source: {source_label}</span>', unsafe_allow_html=True)
                     st.markdown(response_text)
-                    answered_from_doc = True
 
-        # Priority 2: Fall back to Snowflake Data Mart if unrelated to document
-        if not answered_from_doc:
-            with st.spinner("Analyzing data mart..."):
+        # Branch 2: User explicitly routed to Snowflake Data Mart
+        else:
+            source_label = "Snowflake Data Mart (CORTEX.MART)"
+            with st.spinner("Analyzing Snowflake Data Mart..."):
                 explanation, sql_query = generate_sql_for_database(user_prompt)
                 
+                st.markdown(f'<span class="source-badge badge-snowflake">📌 Source: {source_label}</span>', unsafe_allow_html=True)
                 if sql_query:
                     st.markdown(explanation)
                     response_text = explanation
@@ -739,6 +792,7 @@ if user_prompt:
         messages.append({
             "role": "assistant",
             "content": response_text,
+            "source": source_label,
             "sql": sql_query,
             "data": df_result
         })
