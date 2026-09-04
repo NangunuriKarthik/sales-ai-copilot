@@ -194,21 +194,21 @@ st.markdown("""
 # 5. VERIFIED QUERIES & DATA MART ENGINE
 # ==============================================================================
 RAW_VERIFIED_QUERIES = [
-    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},[cite: 1]
-    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},[cite: 1]
-    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
-    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},[cite: 1]
+    {"question": "What is the total sales amount?", "sql": "SELECT SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES"},
+    {"question": "What are the total sales by customer?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC"},
+    {"question": "What are the top products by sales?", "sql": "SELECT p.product_name, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.product_name ORDER BY total_sales DESC LIMIT 10"},
+    {"question": "What are total sales by customer region?", "sql": "SELECT c.region, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY total_sales DESC"},
     {"question": "What is the average sales by region?", "sql": "SELECT c.region, ROUND(AVG(f.total_amount), 2) AS average_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.region ORDER BY average_sales DESC"},
-    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},[cite: 1]
-    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},[cite: 1]
-    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},[cite: 1]
-    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},[cite: 1]
-    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},[cite: 1]
-    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},[cite: 1]
-    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},[cite: 1]
-    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},[cite: 1]
-    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},[cite: 1]
-    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}[cite: 1]
+    {"question": "What are total sales by month?", "sql": "SELECT d.year, d.month, d.month_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year, d.month, d.month_name ORDER BY d.year, d.month"},
+    {"question": "What were the total sales in 2000?", "sql": "SELECT d.year, SUM(s.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES s JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = 2000 GROUP BY d.year"},
+    {"question": "What is total sales by year?", "sql": "SELECT d.year, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_DATE d ON f.order_date = d.date_key GROUP BY d.year ORDER BY d.year ASC"},
+    {"question": "What is total sales by order channel?", "sql": "SELECT order_channel, SUM(total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES GROUP BY order_channel ORDER BY total_sales DESC"},
+    {"question": "What is the average order value?", "sql": "SELECT ROUND(AVG(total_amount), 2) AS average_order_value FROM CORTEX.MART.FACT_SALES"},
+    {"question": "How many sales orders are there?", "sql": "SELECT COUNT(order_id) AS total_orders FROM CORTEX.MART.FACT_SALES"},
+    {"question": "What are total sales by sales representative?", "sql": "SELECT r.sales_rep_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_SALES_REP r ON f.sales_rep_id = r.sales_rep_id GROUP BY r.sales_rep_name ORDER BY total_sales DESC LIMIT 10"},
+    {"question": "What is total sales by product category?", "sql": "SELECT p.category, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.category ORDER BY total_sales DESC"},
+    {"question": "What is total sales by brand?", "sql": "SELECT p.brand, SUM(i.line_total) AS total_sales FROM CORTEX.MART.FACT_SALES_ITEM i JOIN CORTEX.MART.DIM_PRODUCT p ON i.product_id = p.product_id GROUP BY p.brand ORDER BY total_sales DESC"},
+    {"question": "Who are the top 10 customers by sales?", "sql": "SELECT c.customer_name, SUM(f.total_amount) AS total_sales FROM CORTEX.MART.FACT_SALES f JOIN CORTEX.MART.DIM_CUSTOMER c ON f.customer_id = c.customer_id GROUP BY c.customer_name ORDER BY total_sales DESC LIMIT 10"}
 ]
 
 def normalize_text(text: str) -> str:
@@ -388,7 +388,6 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
 
     # Priority 1: High-Accuracy Pandas Tabular Lookup
     if df is not None and not df.empty:
-        # Ignore common query terms to extract actual entity keywords
         stop_words = {
             "what", "is", "the", "are", "sales", "for", "total", "average", "avg", 
             "count", "show", "give", "list", "of", "in", "by", "all", "me", "find"
