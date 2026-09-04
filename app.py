@@ -221,10 +221,24 @@ def normalize_text(text: str) -> str:
 # ------------------------------------------------------------------------------
 # Semantic model loader / retrieval
 # ------------------------------------------------------------------------------
-SEMANTIC_MODEL_PATH = os.getenv(
-    "SEMANTIC_MODEL_PATH",
-    os.path.join(os.path.dirname(__file__), "sales_intelligence_model_enhanced.yaml")
-)
+# Known-safe physical mappings. The YAML remains the semantic source of truth,
+# but these mappings prevent basic warehouse questions from failing if the
+# YAML file is not found in the Streamlit deployment directory.
+PHYSICAL_TABLE_FALLBACK = {
+    "dim_customer": "CORTEX.MART.DIM_CUSTOMER",
+    "dim_product": "CORTEX.MART.DIM_PRODUCT",
+    "dim_sales_rep": "CORTEX.MART.DIM_SALES_REP",
+    "dim_date": "CORTEX.MART.DIM_DATE",
+    "fact_sales": "CORTEX.MART.FACT_SALES",
+    "fact_sales_item": "CORTEX.MART.FACT_SALES_ITEM",
+}
+
+_yaml_candidates = [
+    os.getenv("SEMANTIC_MODEL_PATH", ""),
+    os.path.join(os.path.dirname(__file__), "sales_intelligence_model_enhanced.yaml"),
+    os.path.join(os.getcwd(), "sales_intelligence_model_enhanced.yaml"),
+]
+SEMANTIC_MODEL_PATH = next((p for p in _yaml_candidates if p and os.path.exists(p)), _yaml_candidates[1])
 
 @st.cache_data(show_spinner=False)
 def load_semantic_model(path: str) -> Dict[str, Any]:
@@ -354,8 +368,8 @@ def validate_read_only_sql(sql: str) -> Tuple[bool, str]:
     forbidden = r"\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|call|copy|put|remove)\b"
     if re.search(forbidden, normalized):
         return False, "The generated SQL contains a non-read-only operation."
-    # Only allow known physical tables from the semantic model.
-    allowed_tables = set()
+    # Allow the known warehouse tables even if YAML is temporarily unavailable.
+    allowed_tables = {v.lower() for v in PHYSICAL_TABLE_FALLBACK.values()}
     for t in SEMANTIC_MODEL.get("tables", []):
         bt = t.get("base_table", {})
         if bt.get("database") and bt.get("schema") and bt.get("table"):
@@ -367,6 +381,136 @@ def validate_read_only_sql(sql: str) -> Tuple[bool, str]:
     return True, ""
 
 
+def _physical_table(name: str) -> str:
+    """Resolve a semantic table using YAML first, then the safe fallback map."""
+    key = normalize_text(name).replace(" ", "_")
+    for t in SEMANTIC_MODEL.get("tables", []):
+        if normalize_text(t.get("name", "")).replace(" ", "_") == key:
+            bt = t.get("base_table", {})
+            parts = [bt.get("database"), bt.get("schema"), bt.get("table")]
+            physical = ".".join(str(x) for x in parts if x)
+            if physical:
+                return physical
+    return PHYSICAL_TABLE_FALLBACK.get(key, name)
+
+
+def _extract_year_from_question(question: str) -> Optional[int]:
+    match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", question or "")
+    return int(match.group(1)) if match else None
+
+
+def _hard_reliable_sql(question: str) -> Optional[Tuple[str, str]]:
+    """Reliable SQL for common intents; intentionally independent of Cortex."""
+    q = normalize_text(question)
+    fs = PHYSICAL_TABLE_FALLBACK["fact_sales"]
+    fsi = PHYSICAL_TABLE_FALLBACK["fact_sales_item"]
+    dc = PHYSICAL_TABLE_FALLBACK["dim_customer"]
+    dp = PHYSICAL_TABLE_FALLBACK["dim_product"]
+    dr = PHYSICAL_TABLE_FALLBACK["dim_sales_rep"]
+    dd = PHYSICAL_TABLE_FALLBACK["dim_date"]
+    year = _extract_year_from_question(question)
+
+    sales = any(x in q for x in [
+        "sales", "revenue", "sales amount", "sales value", "turnover",
+        "selling amount", "sales revenue"
+    ])
+    total = any(x in q for x in [
+        "total", "overall", "sum", "how much", "amount", "value"
+    ])
+
+    # 1. Total sales / revenue / sales amount.
+    grouped = any(x in q for x in [
+        "by customer", "by client", "by account", "by product", "by item",
+        "by region", "by channel", "by month", "by year", "by category",
+        "by brand", "by sales rep", "by representative"
+    ])
+    if sales and total and not grouped:
+        join = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
+        where = f"\nWHERE {dd}.year = {year}" if year else ""
+        return (
+            "Total sales amount (order-level grain).",
+            f"SELECT ROUND(SUM({fs}.total_amount), 2) AS total_sales\nFROM {fs}{join}{where}"
+        )
+
+    # 2. Total sales by customer.
+    if sales and any(x in q for x in ["by customer", "by client", "by account"]):
+        join_date = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
+        where = f"\nWHERE {dd}.year = {year}" if year else ""
+        direction = "ASC" if any(x in q for x in ["lowest", "least", "bottom", "worst", "smallest"]) else "DESC"
+        lm = re.search(r"\b(?:top|bottom)\s+(\d+)\b", q)
+        limit = f"\nLIMIT {int(lm.group(1))}" if lm else ""
+        return (
+            "Sales by customer (order-level grain).",
+            f"SELECT {dc}.customer_name, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
+            f"FROM {fs}\nJOIN {dc} ON {fs}.customer_id = {dc}.customer_id"
+            f"{join_date}{where}\nGROUP BY {dc}.customer_name\n"
+            f"ORDER BY total_sales {direction}{limit}"
+        )
+
+    # 3. Sales by region.
+    if sales and "by region" in q:
+        join_date = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
+        where = f"\nWHERE {dd}.year = {year}" if year else ""
+        return (
+            "Sales by customer region.",
+            f"SELECT {dc}.region, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
+            f"FROM {fs}\nJOIN {dc} ON {fs}.customer_id = {dc}.customer_id"
+            f"{join_date}{where}\nGROUP BY {dc}.region\nORDER BY total_sales DESC"
+        )
+
+    # 4. Product/category/brand sales use line-item grain.
+    if sales and "by product" in q:
+        return (
+            "Sales by product (line-item grain).",
+            f"SELECT {dp}.product_name, ROUND(SUM({fsi}.line_total), 2) AS total_sales\n"
+            f"FROM {fsi}\nJOIN {dp} ON {fsi}.product_id = {dp}.product_id\n"
+            f"GROUP BY {dp}.product_name\nORDER BY total_sales DESC"
+        )
+    if sales and "by category" in q:
+        return (
+            "Sales by category (line-item grain).",
+            f"SELECT {dp}.category, ROUND(SUM({fsi}.line_total), 2) AS total_sales\n"
+            f"FROM {fsi}\nJOIN {dp} ON {fsi}.product_id = {dp}.product_id\n"
+            f"GROUP BY {dp}.category\nORDER BY total_sales DESC"
+        )
+    if sales and "by brand" in q:
+        return (
+            "Sales by brand (line-item grain).",
+            f"SELECT {dp}.brand, ROUND(SUM({fsi}.line_total), 2) AS total_sales\n"
+            f"FROM {fsi}\nJOIN {dp} ON {fsi}.product_id = {dp}.product_id\n"
+            f"GROUP BY {dp}.brand\nORDER BY total_sales DESC"
+        )
+
+    # 5. Orders.
+    if any(x in q for x in ["how many orders", "number of orders", "order count", "count of orders"]):
+        join = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
+        where = f"\nWHERE {dd}.year = {year}" if year else ""
+        return ("Order count.", f"SELECT COUNT({fs}.order_id) AS order_count\nFROM {fs}{join}{where}")
+
+    # 6. Average order value.
+    if any(x in q for x in ["average order value", "avg order value", "average order amount", "mean order value"]):
+        join = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
+        where = f"\nWHERE {dd}.year = {year}" if year else ""
+        return ("Average order value.", f"SELECT ROUND(AVG({fs}.total_amount), 2) AS average_order_value\nFROM {fs}{join}{where}")
+
+    # 7. Sales by channel / sales rep.
+    if sales and "by channel" in q:
+        return (
+            "Sales by order channel.",
+            f"SELECT {fs}.order_channel, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
+            f"FROM {fs}\nGROUP BY {fs}.order_channel\nORDER BY total_sales DESC"
+        )
+    if sales and any(x in q for x in ["by sales rep", "by sales representative", "by representative"]):
+        return (
+            "Sales by sales representative.",
+            f"SELECT {dr}.sales_rep_name, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
+            f"FROM {fs}\nJOIN {dr} ON {fs}.sales_rep_id = {dr}.sales_rep_id\n"
+            f"GROUP BY {dr}.sales_rep_name\nORDER BY total_sales DESC"
+        )
+
+    return None
+
+
 def generate_sql_for_database(prompt: str, conversation_context: str = "") -> Tuple[str, Optional[str]]:
     """Semantic-model-grounded SQL generation.
 
@@ -374,6 +518,17 @@ def generate_sql_for_database(prompt: str, conversation_context: str = "") -> Tu
     retrieved verified examples and conversation context are supplied to Cortex.
     """
     norm_p = normalize_text(prompt)
+
+    # IMPORTANT: restore the reliable behavior for common questions before
+    # invoking Cortex. The previous revision removed this layer, which caused
+    # even canonical questions such as "What is the total sales amount?" to
+    # fall through to the generic semantic/LLM path.
+    reliable = _hard_reliable_sql(prompt)
+    if reliable:
+        ok, _ = validate_read_only_sql(reliable[1])
+        if ok:
+            return reliable
+
     if norm_p in {"hi", "hello", "hey", "help", "who are you", "good morning", "good evening"}:
         return "Hello! I am your Sales Intelligence Assistant. Ask me about sales, customers, products, regions, representatives, channels, or time trends.", None
 
@@ -431,7 +586,34 @@ Rules:
         except Exception:
             continue
 
-    return "I could not formulate a safe query for this question from the current semantic model.", None
+    # Final fallback: reuse the closest verified query only when the similarity
+    # is strong enough. This preserves the original application's useful
+    # behavior instead of returning a dead end after a Cortex failure.
+    matches = retrieve_verified_queries(prompt, top_k=3)
+    if matches:
+        qn = normalize_text(prompt)
+        scored = []
+        for item in matches:
+            cn = normalize_text(item["question"])
+            seq = difflib.SequenceMatcher(None, qn, cn).ratio()
+            qt, ct = set(qn.split()), set(cn.split())
+            overlap = len(qt & ct) / max(1, len(qt | ct))
+            scored.append((0.60 * seq + 0.40 * overlap, item))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        if scored and scored[0][0] >= 0.52:
+            raw_verified = scored[0][1]["sql"]
+            # Convert logical __table placeholders used by the YAML examples.
+            for key, physical in PHYSICAL_TABLE_FALLBACK.items():
+                raw_verified = re.sub(rf"\\b__{re.escape(key)}\\b", physical, raw_verified, flags=re.IGNORECASE)
+            raw_verified = clean_generated_sql(raw_verified)
+            ok, _ = validate_read_only_sql(raw_verified)
+            if ok:
+                return (
+                    f"Using the closest verified semantic pattern for: **{prompt}**",
+                    raw_verified,
+                )
+
+    return "I could not formulate a safe query for this question from the current semantic model. Please try a sales, revenue, order, customer, product, region, channel, representative, or date question.", None
 
 # ==============================================================================
 # 6. ENHANCED DOCUMENT INTELLIGENCE & ACCURATE TABULAR QA
