@@ -245,16 +245,13 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
     p = prompt.lower().strip()
     norm_p = normalize_text(prompt)
 
-    # 1. Greetings
     if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
         return "Hello! I am your Sales Intelligence Assistant. Ask any question about enterprise revenue, customers, catalog products, regions, or time trends.", None
 
-    # 2. Strict Exact Verified Query Matching (Only matches if no extra entity filters exist)
     for vq in PROCESSED_VERIFIED:
         if norm_p == vq["norm_q"]:
             return f"Analysis for: **{vq['question']}**", vq["sql"]
 
-    # 3. Parameter-Aware Explicit Year Filters
     year_match = re.search(r'\b(19\d\d|20\d\d)\b', p)
     target_year = year_match.group(1) if year_match else None
 
@@ -274,7 +271,6 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
         item_agg = "SUM(si.line_total)"
         alias = "total_sales"
 
-    # Only trigger specific year templates if there are no extra unhandled nouns (like county, shoes, etc.)
     unhandled_nouns = [w for w in re.findall(r'\b[a-zA-Z]+\b', p) if len(w) > 3 and w not in [
         "what", "were", "total", "sales", "year", "annual", "show", "give", "need", "from", "with", "have"
     ]]
@@ -288,7 +284,6 @@ WHERE d.year = {target_year}
 GROUP BY d.year
         """.strip()
 
-    # 4. Strict Cortex Schema-Grounded Execution
     cortex_instruction = f"""
 You are a Snowflake SQL expert generating queries for database CORTEX, schema MART.
 
@@ -333,7 +328,6 @@ RESPONSE:
         except Exception:
             continue
 
-    # Clean fallback if LLM times out
     if "county" in p:
         return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None
 
@@ -385,14 +379,53 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
 def answer_user_question_on_document(question: str, doc_context: str, filename: str, df: Optional[pd.DataFrame] = None) -> str:
     q_lower = question.lower().strip()
 
-    # Priority 1: High-Accuracy Pandas Tabular Lookup
+    # Priority 1: Direct High-Accuracy Pandas Tabular Analytics
     if df is not None and not df.empty:
-        stop_words = {
+        # 1. Identify which column(s) match the user's question
+        col_map = {col.lower().strip(): col for col in df.columns}
+        matched_target_col = None
+        for c_lower, c_orig in col_map.items():
+            # Check for singular/plural matching (e.g. city -> cities, district -> districts)
+            stem = c_lower.rstrip('s')
+            if stem in q_lower or (stem.endswith('y') and stem[:-1] + 'ies' in q_lower):
+                matched_target_col = c_orig
+                break
+
+        is_count_query = any(k in q_lower for k in ["how many", "count", "number of", "total", "distinct", "unique"])
+        is_list_query = any(k in q_lower for k in ["list", "what are", "show", "names of", "give me"])
+
+        # Case A: User asked about count/total of a specific column (e.g. "how many total city", "how many district we have total")
+        if matched_target_col and is_count_query:
+            valid_entries = df[matched_target_col].dropna()
+            valid_entries = valid_entries[valid_entries.astype(str).str.strip().str.lower() != 'none']
+            total_rows = len(valid_entries)
+            unique_count = valid_entries.nunique()
+            unique_vals = list(valid_entries.unique())
+
+            sample_str = ", ".join([f"`{str(v)}`" for v in unique_vals[:8]])
+            if len(unique_vals) > 8:
+                sample_str += f" and {len(unique_vals) - 8} more..."
+
+            return (
+                f"In **`{filename}`**, there are **{unique_count} unique {matched_target_col}s** "
+                f"(across **{total_rows}** total populated records).\n\n"
+                f"**Entries:** {sample_str}"
+            )
+
+        # Case B: User asked to list values of a column (e.g. "list all cities", "what are the districts")
+        if matched_target_col and is_list_query:
+            valid_entries = df[matched_target_col].dropna()
+            valid_entries = valid_entries[valid_entries.astype(str).str.strip().str.lower() != 'none']
+            unique_vals = list(valid_entries.unique())
+            val_bullets = "\n".join([f"• {str(v)}" for v in unique_vals])
+            return f"**List of {matched_target_col}s in `{filename}` ({len(unique_vals)} unique):**\n\n{val_bullets}"
+
+        # Case C: Filtering rows based on specific entity values (e.g. "Hyderabad", "Warangal", "Sonoma")
+        words = [w for w in re.findall(r'\b[a-zA-Z0-9_]+\b', q_lower) if len(w) > 2 and w not in [
             "what", "is", "the", "are", "sales", "for", "total", "average", "avg", 
             "count", "show", "give", "list", "of", "in", "by", "all", "me", "find",
-            "county", "state", "city", "value"
-        }
-        words = [w for w in re.findall(r'\b[a-zA-Z0-9_]+\b', q_lower) if len(w) > 2 and w not in stop_words]
+            "county", "state", "city", "district", "value", "how", "many"
+        ]]
         
         mask = pd.Series(False, index=df.index)
         for col in df.columns:
@@ -417,8 +450,8 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
                 else:
                     return f"In **`{filename}`**, the total **{target_metric_col}** for **{matched_entity}** is **{total_val:,.2f}** ({count_val} matching records found)."
             else:
-                preview = matched_df.dropna(how='all', axis=1).head(10)
-                return f"Found **{len(matched_df)}** matching records in **`{filename}`**:\n\n" + preview.to_markdown(index=False)
+                preview = matched_df.dropna(how='all', axis=1).head(15)
+                return f"Found **{len(matched_df)}** matching record(s) in **`{filename}`**:\n\n" + preview.to_markdown(index=False)
 
     # Priority 2: Generative Cortex QA with Document Context
     prompt = f"""
@@ -431,8 +464,8 @@ USER QUESTION:
 {question}
 
 INSTRUCTIONS:
-1. Provide a direct, factual answer using only the numbers and records in the data above.
-2. If the user asks for a specific metric (e.g., Sonoma County sales), locate that record and state the exact number.
+1. Provide a direct, factual answer using only the numbers, column values, and records in the data above.
+2. If the user asks for counts, lists, or specific records, compute or locate them accurately.
 3. If this information is NOT contained in the document, reply:
    'The uploaded document does not contain information regarding this query.'
 
@@ -672,7 +705,6 @@ for col, (label, question) in zip(pill_cols, onboarding_pills):
 
 st.markdown("<hr style='margin: 12px 0 20px 0; border: 0; border-top: 1px solid #f3f4f6;'>", unsafe_allow_html=True)
 
-# Render Chat History
 for idx, msg in enumerate(messages):
     with st.chat_message(msg["role"]):
         if msg.get("source"):
@@ -690,7 +722,6 @@ for idx, msg in enumerate(messages):
             with tab_chart:
                 display_chart_tab(msg["data"], key_prefix=f"hist_{current_id}_{idx}")
 
-# Interactive Source Toggle
 has_active_doc = active_session_data.get("doc_name") is not None
 active_file_name = active_session_data.get("doc_name", "")
 doc_choice_label = f"📄 Document: {active_file_name[:20]}..." if has_active_doc else "📄 Document (Upload in sidebar)"
@@ -728,7 +759,7 @@ if user_prompt:
         df_result = None
         source_label = ""
 
-        # Branch 1: User explicitly routed to the Document
+        # Branch 1: Explicitly routed to Document
         if "📄 Document" in query_target:
             if not has_active_doc:
                 response_text = "No document is currently active in this conversation. Please upload a spreadsheet or file in the sidebar, or switch the toggle to **❄️ Snowflake Data Mart**."
@@ -741,7 +772,7 @@ if user_prompt:
                     st.markdown(f'<span class="source-badge badge-doc">📌 Source: {source_label}</span>', unsafe_allow_html=True)
                     st.markdown(response_text)
 
-        # Branch 2: User explicitly routed to Snowflake Data Mart
+        # Branch 2: Explicitly routed to Snowflake Data Mart
         else:
             source_label = "Snowflake Data Mart (CORTEX.MART)"
             with st.spinner("Analyzing Snowflake Data Mart..."):
@@ -756,7 +787,6 @@ if user_prompt:
                     try:
                         df_result = session.sql(sql_query).to_pandas()
                         if df_result is not None and not df_result.empty:
-                            # Verify if the returned aggregate is entirely NULL
                             first_val = df_result.iloc[0, -1] if len(df_result.columns) > 0 else None
                             if pd.isnull(first_val) or (isinstance(first_val, (int, float)) and first_val == 0 and len(df_result) == 1):
                                 st.info("The query executed, but no matching records were found in the Snowflake Data Mart.")
