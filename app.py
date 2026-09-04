@@ -225,7 +225,7 @@ def generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
 
     # 2. Schema Guardrail (Missing Dimensions)
     if "county" in tokens:
-        return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None
+        return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None[cite: 1]
 
     # 3. Detect Metric Intent
     is_avg = any(w in tokens for w in ["average", "avg", "mean"])
@@ -288,7 +288,7 @@ JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 WHERE d.year = {target_year}
 GROUP BY d.year
             """.strip()
-            return f"Calculating {metric_label} for year {target_year}:", sql
+            return f"Calculating {metric_label} for year {target_year}:", sql[cite: 1]
         else:
             limit_clause = f"LIMIT {limit_val}" if (is_asc or is_desc or is_single_best) else ""
             order_clause = f"ORDER BY {alias} {sort_dir}" if (is_asc or is_desc or is_single_best) else "ORDER BY d.year ASC"
@@ -303,7 +303,7 @@ GROUP BY d.year
 {limit_clause}
             """.strip()
             direction_desc = "highest" if sort_dir == "DESC" else "lowest"
-            return f"Analyzing {direction_desc} sales by calendar year:", sql
+            return f"Analyzing {direction_desc} sales by calendar year:", sql[cite: 1]
 
     # B. Month Dimension
     if any(w in tokens for w in ["month", "months", "monthly"]):
@@ -323,7 +323,7 @@ GROUP BY d.month, d.month_name
 {limit_clause}
         """.strip()
         y_text = f" for year {target_year}" if target_year else ""
-        return f"Analyzing monthly {metric_label}{y_text}:", sql
+        return f"Analyzing monthly {metric_label}{y_text}:", sql[cite: 1]
 
     # C. Quarter Dimension
     if any(w in tokens for w in ["quarter", "quarters", "quarterly"]):
@@ -338,11 +338,11 @@ JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
 GROUP BY d.quarter
 ORDER BY d.quarter ASC
         """.strip()
-        return f"Aggregating {metric_label} by calendar quarter:", sql
+        return f"Aggregating {metric_label} by calendar quarter:", sql[cite: 1]
 
     # D. Product Dimension
     if any(w in tokens for w in ["product", "products", "item", "items", "sku"]):
-        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""[cite: 1]
         sql = f"""
 SELECT 
     p.product_name,
@@ -355,12 +355,12 @@ ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
         label_rank = "lowest-performing" if is_asc else "top-performing"
-        return f"Ranking {label_rank} products by {metric_label}:", sql
+        return f"Ranking {label_rank} products by {metric_label}:", sql[cite: 1]
 
     # E. Category & Subcategory Dimension
     if any(w in tokens for w in ["category", "categories", "subcategory", "subcategories"]):
-        col = "p.sub_category" if "sub" in p else "p.category"
-        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        col = "p.sub_category" if "sub" in p else "p.category"[cite: 1]
+        year_join = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""[cite: 1]
         sql = f"""
 SELECT 
     {col},
@@ -372,7 +372,7 @@ GROUP BY {col}
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Analyzing {metric_label} by product category:", sql
+        return f"Analyzing {metric_label} by product category:", sql[cite: 1]
 
     # F. Brand Dimension
     if any(w in tokens for w in ["brand", "brands"]):
@@ -386,7 +386,7 @@ GROUP BY p.brand
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Analyzing {metric_label} by brand:", sql
+        return f"Analyzing {metric_label} by brand:", sql[cite: 1]
 
     # G. Customer Dimension
     if any(w in tokens for w in ["customer", "customers", "client", "clients", "account", "accounts"]) and not any(w in tokens for w in ["region", "industry", "type", "tier"]):
@@ -400,11 +400,11 @@ GROUP BY c.customer_name
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Calculating {metric_label} by customer account:", sql
+        return f"Calculating {metric_label} by customer account:", sql[cite: 1]
 
     # H. Customer Type / Tier / Industry
     if any(w in tokens for w in ["industry", "industries", "tier", "segment", "enterprise", "smb"]):
-        dim_col = "c.industry" if "industry" in tokens else "c.customer_type"
+        dim_col = "c.industry" if "industry" in tokens else "c.customer_type"[cite: 1]
         sql = f"""
 SELECT 
     {dim_col},
@@ -414,11 +414,11 @@ JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
 GROUP BY {dim_col}
 ORDER BY {alias} {sort_dir}
         """.strip()
-        return f"Evaluating {metric_label} across customer segments:", sql
+        return f"Evaluating {metric_label} across customer segments:", sql[cite: 1]
 
     # I. Region Dimension
     if any(w in tokens for w in ["region", "regions", "territory", "territories"]):
-        year_join = f"JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        year_join = f"JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""[cite: 1]
         limit_clause = f"LIMIT {limit_val}" if is_single_best else ""
         sql = f"""
 SELECT 
@@ -431,7 +431,7 @@ GROUP BY c.region
 ORDER BY {alias} {sort_dir}
 {limit_clause}
         """.strip()
-        return f"Calculating {metric_label} grouped by customer region:", sql
+        return f"Calculating {metric_label} grouped by customer region:", sql[cite: 1]
 
     # J. Sales Rep Dimension
     if any(w in tokens for w in ["rep", "reps", "salesperson", "representative", "salespeople"]):
@@ -445,7 +445,7 @@ GROUP BY r.sales_rep_name
 ORDER BY {alias} {sort_dir}
 LIMIT {limit_val}
         """.strip()
-        return f"Evaluating sales representative performance by {metric_label}:", sql
+        return f"Evaluating sales representative performance by {metric_label}:", sql[cite: 1]
 
     # K. Channel Dimension
     if any(w in tokens for w in ["channel", "channels"]):
@@ -457,7 +457,7 @@ FROM CORTEX.MART.FACT_SALES s
 GROUP BY s.order_channel
 ORDER BY {alias} {sort_dir}
         """.strip()
-        return f"Analyzing {metric_label} by sales channel:", sql
+        return f"Analyzing {metric_label} by sales channel:", sql[cite: 1]
 
     # L. Order Status
     if any(w in tokens for w in ["status", "completed", "cancelled", "pending"]):
@@ -470,31 +470,101 @@ FROM CORTEX.MART.FACT_SALES s
 GROUP BY s.order_status
 ORDER BY total_sales DESC
         """.strip()
-        return "Evaluating sales volume by order status:", sql
+        return "Evaluating sales volume by order status:", sql[cite: 1]
 
     # M. Overall Gross Sales / Averages / Totals
     if any(w in tokens for w in ["sales", "revenue", "amount", "total", "average", "avg"]):
         sql = f"SELECT {fact_metric} AS {alias} FROM CORTEX.MART.FACT_SALES s"
-        return f"Calculating overall {metric_label} across all recorded transactions:", sql
+        return f"Calculating overall {metric_label} across all recorded transactions:", sql[cite: 1]
 
     return "I could not formulate a query for this question. Please specify metrics (sales, revenue, orders) or dimensions (year, month, products, customers, regions).", None
 
 # ==============================================================================
-# 6. ENHANCED DOCUMENT INTELLIGENCE & ACCURATE TABULAR QA
+# 6. RESILIENT DOCUMENT INTELLIGENCE & ACCURATE TABULAR QA
 # ==============================================================================
 def extract_df_from_xlsx(file_bytes: bytes) -> pd.DataFrame:
+    """Multi-stage robust spreadsheet extraction supporting XLSX, XLS, HTML, and CSV fallbacks."""
+    # 1. Standard openpyxl engine
     try:
-        return pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+        df = pd.read_excel(io.BytesIO(file_bytes), engine="openpyxl")
+        if df is not None and not df.empty:
+            return df
     except Exception:
         pass
-    for delimiter in [',', '\t', ';']:
-        try:
-            df = pd.read_csv(io.BytesIO(file_bytes), sep=delimiter, encoding='utf-8')
-            if len(df.columns) > 1:
-                return df
-        except Exception:
-            pass
-    raise ValueError("Could not parse file as tabular spreadsheet.")
+
+    # 2. Try xlrd for older binary .xls files
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes), engine="xlrd")
+        if df is not None and not df.empty:
+            return df
+    except Exception:
+        pass
+
+    # 3. Try calamine or default auto engine
+    try:
+        df = pd.read_excel(io.BytesIO(file_bytes))
+        if df is not None and not df.empty:
+            return df
+    except Exception:
+        pass
+
+    # 4. Deep ZIP-XML parsing for modern .xlsx
+    try:
+        with zipfile.ZipFile(io.BytesIO(file_bytes)) as z:
+            shared_strings = []
+            if 'xl/sharedStrings.xml' in z.namelist():
+                ss_tree = ET.fromstring(z.read('xl/sharedStrings.xml'))
+                for si in ss_tree.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}si'):
+                    t_nodes = si.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}t')
+                    shared_strings.append("".join([n.text or "" for n in t_nodes]))
+
+            sheet_files = [n for n in z.namelist() if n.startswith('xl/worksheets/sheet')]
+            if sheet_files:
+                sheet_tree = ET.fromstring(z.read(sheet_files[0]))
+                rows_data = []
+                for row in sheet_tree.iterfind('.//{http://schemas.openxmlformats.org/spreadsheetml/2006/main}row'):
+                    row_cells = []
+                    for c in row.iterfind('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}c'):
+                        val_node = c.find('{http://schemas.openxmlformats.org/spreadsheetml/2006/main}v')
+                        cell_val = val_node.text if val_node is not None else ""
+                        if c.attrib.get('t') == 's' and cell_val.isdigit():
+                            idx = int(cell_val)
+                            cell_val = shared_strings[idx] if idx < len(shared_strings) else cell_val
+                        row_cells.append(cell_val)
+                    if any(str(cell).strip() for cell in row_cells):
+                        rows_data.append(row_cells)
+
+                if rows_data:
+                    headers = [str(h).strip() if str(h).strip() else f"Col_{i+1}" for i, h in enumerate(rows_data[0])]
+                    df = pd.DataFrame(rows_data[1:], columns=headers)
+                    for col in df.columns:
+                        try:
+                            df[col] = pd.to_numeric(df[col])
+                        except (ValueError, TypeError):
+                            pass
+                    return df
+    except Exception:
+        pass
+
+    # 5. Check if the spreadsheet is actually an HTML table export
+    try:
+        tables = pd.read_html(io.BytesIO(file_bytes))
+        if tables:
+            return tables[0]
+    except Exception:
+        pass
+
+    # 6. Check if it is a renamed CSV file across standard delimiters and encodings
+    for enc in ['utf-8', 'latin1', 'cp1252']:
+        for sep in [',', '\t', ';', '|']:
+            try:
+                df = pd.read_csv(io.BytesIO(file_bytes), sep=sep, encoding=enc)
+                if df is not None and len(df.columns) > 1 and len(df) > 0:
+                    return df
+            except Exception:
+                pass
+
+    raise ValueError("Unable to read this spreadsheet. Please ensure it is a valid .xlsx, .xls, or .csv file.")
 
 def extract_text_from_pdf(file_bytes: bytes) -> str:
     if pypdf is None:
@@ -526,7 +596,7 @@ def answer_user_question_on_document(question: str, doc_context: str, filename: 
     q_lower = question.lower().strip()
 
     if df is not None and not df.empty:
-        col_map = {col.lower().strip(): col for col in df.columns}
+        col_map = {str(col).lower().strip(): col for col in df.columns}
         matched_target_col = None
         for c_lower, c_orig in col_map.items():
             stem = c_lower.rstrip('s')
@@ -616,36 +686,40 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
         return f"The uploaded file `{filename}` is empty.", None, None
 
     fname_lower = filename.lower()
-    if fname_lower.endswith((".csv", ".xlsx", ".xls")):
-        if fname_lower.endswith(".csv"):
-            try:
-                df = pd.read_csv(io.BytesIO(file_bytes))
-            except Exception:
-                df = pd.read_csv(io.BytesIO(file_bytes), encoding='latin1')
-        else:
-            df = extract_df_from_xlsx(file_bytes)
+    try:
+        if fname_lower.endswith((".csv", ".xlsx", ".xls")):
+            if fname_lower.endswith(".csv"):
+                try:
+                    df = pd.read_csv(io.BytesIO(file_bytes))
+                except Exception:
+                    df = pd.read_csv(io.BytesIO(file_bytes), encoding='latin1')
+            else:
+                df = extract_df_from_xlsx(file_bytes)
+                
+            clean_df = df.dropna(how='all')
+            context_str = f"File: {filename}\nTotal Rows: {len(clean_df)}\nColumns: {', '.join([str(c) for c in clean_df.columns])}\n\nDATA PREVIEW AND RECORDS:\n"
+            context_str += clean_df.to_string(max_rows=150)
             
-        clean_df = df.dropna(how='all')
-        context_str = f"File: {filename}\nTotal Rows: {len(clean_df)}\nColumns: {', '.join(clean_df.columns)}\n\nDATA PREVIEW AND RECORDS:\n"
-        context_str += clean_df.to_string(max_rows=150)
-        
-        summary = (
-            f"Successfully processed **`{filename}`** with **{len(clean_df):,} rows** and **{len(clean_df.columns)} columns**.\n\n"
-            f"**Columns:** {', '.join([f'`{col}`' for col in clean_df.columns])}\n\n"
-            f"You can now ask questions about the records, values, or metrics in this file."
-        )
-        return summary, clean_df, context_str
-        
-    elif fname_lower.endswith(".pdf"):
-        txt = extract_text_from_pdf(file_bytes)
-        summary = f"Uploaded PDF **`{filename}`** (~{len(txt.split()):,} words). Ready for your questions."
-        return summary, None, txt
-        
-    elif fname_lower.endswith((".docx", ".doc")):
-        txt = extract_text_from_docx(file_bytes)
-        summary = f"Uploaded Word Document **`{filename}`** (~{len(txt.split()):,} words). Ready for your questions."
-        return summary, None, txt
-        
+            summary = (
+                f"Successfully processed **`{filename}`** with **{len(clean_df):,} rows** and **{len(clean_df.columns)} columns**.\n\n"
+                f"**Columns:** {', '.join([f'`{col}`' for col in clean_df.columns])}\n\n"
+                f"You can now ask questions about the records, values, or metrics in this file."
+            )
+            return summary, clean_df, context_str
+            
+        elif fname_lower.endswith(".pdf"):
+            txt = extract_text_from_pdf(file_bytes)
+            summary = f"Uploaded PDF **`{filename}`** (~{len(txt.split()):,} words). Ready for your questions."
+            return summary, None, txt
+            
+        elif fname_lower.endswith((".docx", ".doc")):
+            txt = extract_text_from_docx(file_bytes)
+            summary = f"Uploaded Word Document **`{filename}`** (~{len(txt.split()):,} words). Ready for your questions."
+            return summary, None, txt
+            
+    except Exception as err:
+        return f"⚠️ Could not parse `{filename}`: {str(err)}", None, None
+
     return f"Unsupported format for `{filename}`.", None, None
 
 # ==============================================================================
