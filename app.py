@@ -1,5 +1,4 @@
 import difflib
-import os
 import io
 import json
 import re
@@ -10,7 +9,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import streamlit as st
-import yaml
 from snowflake.snowpark import Session
 
 try:
@@ -215,536 +213,365 @@ st.markdown("""
 # 5. DYNAMIC NATURAL LANGUAGE SEMANTIC DATA MART ENGINE
 # ==============================================================================
 def normalize_text(text: str) -> str:
-    return re.sub(r"[^a-z0-9\s]", " ", str(text).lower()).strip()
+    return re.sub(r'[^\w\s]', '', text.lower()).strip()
+
+SEMANTIC_CATALOG = 'MODEL: Sales Intelligence Model\nDESCRIPTION: Semantic model for Sales Intelligence in CORTEX.MART. Use this model to answer business questions about sales, revenue, orders, customers, products, sales representatives, channels, regions, and calendar or fiscal time periods. User wording may be informal or use common business terms; map those terms to the closest semantic field or measure defined below rather than treating wording as an exact-match requirement.\n\nTABLES AND SEMANTIC FIELDS:\n\nTABLE dim_customer -> CORTEX.MART.DIM_CUSTOMER\nDESCRIPTION: Customer master data used to analyze who buys, where customers are located, customer segments, industries, and customer status.\n  customer_id: Unique identifier for a customer. Use for customer-level joins and filtering. | expr=customer_id | synonyms=customer number, customer identifier\n  customer_name: Business name or name of the customer. Use when the user asks about customers, clients, or accounts by name. | expr=customer_name | synonyms=customer, client, account name, client name\n  customer_type: Customer classification or segment, such as enterprise. Use for customer-segment analysis. | expr=customer_type | synonyms=customer segment, account type, client type\n  industry: Industry or business sector associated with the customer. | expr=industry | synonyms=customer industry, industry sector, business sector\n  email: Customer email address. Use only when the user explicitly asks for contact information. | expr=email | synonyms=customer email, contact email\n  phone: Customer phone number. Use only when the user explicitly asks for contact information. | expr=phone | synonyms=customer phone, contact number\n  address_line1: Primary street address for the customer. | expr=address_line1 | synonyms=customer address, street address\n  city: City associated with the customer. | expr=city | synonyms=customer city\n  state: State associated with the customer. | expr=state | synonyms=customer state\n  country: Country associated with the customer. | expr=country | synonyms=customer country\n  postal_code: Postal or ZIP code associated with the customer. | expr=postal_code | synonyms=ZIP code, postal code\n  region: Geographic region associated with the customer. | expr=region | synonyms=customer region, customer territory, geographic customer region\n  status: Current customer or account status, such as Active or inactive. | expr=status | synonyms=customer status, account status\n  signup_date: Date when the customer signed up or registered. | expr=signup_date | synonyms=customer signup date, registration date\n\nTABLE dim_product -> CORTEX.MART.DIM_PRODUCT\nDESCRIPTION: Product master data used to analyze products, SKUs, categories, sub-categories, brands, prices, and product status.\n  product_id: Unique identifier for a product. | expr=product_id | synonyms=product identifier, product number\n  product_name: Name of the product or item sold. | expr=product_name | synonyms=product, item, item name\n  product_sku: Stock keeping unit or product code. | expr=product_sku | synonyms=SKU, stock keeping unit, product code\n  category: Product category or product group. | expr=category | synonyms=product category, product group\n  sub_category: Product sub-category or product sub-group. | expr=sub_category | synonyms=product subcategory, product sub-group\n  brand: Brand associated with the product. | expr=brand | synonyms=product brand, brand name\n  status: Current product or item status. | expr=status | synonyms=product status, item status\n  unit_cost: Cost of one unit of the product. Use for cost analysis, not sales or revenue. | expr=unit_cost | aggregation=avg | synonyms=cost per unit, product cost\n  unit_price: Standard selling price for one unit of the product. Use for product price/list-price questions. | expr=unit_price | aggregation=avg | synonyms=standard selling price, list price, product price\n  created_at: Date when the product record was created. | expr=created_at\n  updated_at: Date when the product record was last updated. | expr=updated_at\n\nTABLE dim_sales_rep -> CORTEX.MART.DIM_SALES_REP\nDESCRIPTION: Sales representative master data used to analyze seller performance, seller regions, managers, and active or inactive representatives.\n  sales_rep_id: Unique identifier for the sales representative. | expr=sales_rep_id | synonyms=sales representative identifier, sales rep number\n  sales_rep_name: Name of the sales representative, salesperson, seller, or account executive. | expr=sales_rep_name | synonyms=sales representative, sales rep, salesperson, seller\n  email: Sales representative email address. | expr=email | synonyms=sales rep email, representative email\n  region: Geographic region assigned to the sales representative. | expr=region | synonyms=sales representative region, rep territory\n  manager_id: Identifier of the manager associated with the sales representative. | expr=manager_id | synonyms=sales rep manager, manager identifier\n  status: Current status of the sales representative. | expr=status | synonyms=sales representative status, rep status\n  hire_date: Date the sales representative was hired. | expr=hire_date | synonyms=sales rep hire date, employment start date\n  created_at: Date when the sales representative record was created. | expr=created_at\n  updated_at: Date when the sales representative record was last updated. | expr=updated_at\n\nTABLE dim_date -> CORTEX.MART.DIM_DATE\nDESCRIPTION: Calendar and fiscal date attributes used to analyze sales and orders by day, week, month, quarter, year, and fiscal period.\n  year: Calendar year used to group or filter sales and orders. | expr=year | synonyms=calendar year, sales year\n  quarter: Calendar quarter used to group or filter sales. | expr=quarter | synonyms=calendar quarter, sales quarter\n  month: Calendar month number used for chronological monthly analysis. | expr=month | synonyms=calendar month, sales month\n  month_name: Calendar month name used for readable monthly reporting. | expr=month_name | synonyms=month name\n  day: Day of the month. | expr=day | synonyms=day of month\n  day_of_week: Name of the weekday. | expr=day_of_week | synonyms=weekday, day name\n  is_weekend: Indicates whether the date is a weekend or weekday. | expr=is_weekend | synonyms=weekend, weekday vs weekend\n  fiscal_year: Fiscal year associated with the date. | expr=fiscal_year | synonyms=financial year, FY\n  fiscal_quarter: Fiscal quarter associated with the date. | expr=fiscal_quarter | synonyms=financial quarter, FQ\n  week_of_year: Calendar week number within the year. | expr=week_of_year | synonyms=week number, calendar week\n  date_key: Calendar date used for time-based sales and order analysis. | expr=date_key | synonyms=calendar date, date\n\nTABLE fact_sales -> CORTEX.MART.FACT_SALES\nDESCRIPTION: Sales order header data where each row represents one sales order. Use this table for order-level sales, revenue, discounts, tax, shipping, status, channel, currency, customer, representative, and order-date analysis.\n  order_id: Unique identifier for a sales order. | expr=order_id | synonyms=sales order number, order identifier\n  customer_id: Identifier of the customer who placed the order. | expr=customer_id | synonyms=order customer identifier\n  sales_rep_id: Identifier of the sales representative associated with the order. | expr=sales_rep_id | synonyms=order sales rep identifier\n  order_status: Current status of the sales order. | expr=order_status | synonyms=sales order status, transaction status\n  order_channel: Channel or source through which the sales order was placed. | expr=order_channel | synonyms=sales channel, channel, order source\n  currency: Currency used for the sales order. | expr=currency | synonyms=order currency, currency code\n  order_count: Count of sales orders. Use when the user asks how many orders, order volume, or number of transactions. | expr=COUNT(order_id) | synonyms=number of orders, order volume, transaction count\n  total_amount: Order-level sales value. Use for total sales, revenue, sales amount, sales dollars, or order value when analyzing sales orders. | expr=total_amount | aggregation=sum | synonyms=sales, revenue, total sales, sales amount, sales value, sales dollars, order value\n  total_discount: Total discount amount applied to sales orders. | expr=total_discount | aggregation=sum | synonyms=discount amount, total discounts, discount value\n  total_tax: Total tax amount associated with sales orders. | expr=total_tax | aggregation=sum | synonyms=sales tax, tax amount\n  shipping_cost: Total shipping or freight cost associated with sales orders. | expr=shipping_cost | aggregation=sum | synonyms=shipping, freight cost, delivery cost\n  order_date: Date when the sales order was placed. Use for sales-period filtering and calendar time analysis. | expr=order_date | synonyms=sales date, transaction date, purchase date\n  created_at: Timestamp when the sales order record was created. | expr=created_at | synonyms=order creation timestamp\n  updated_at: Timestamp when the sales order record was last updated. | expr=updated_at | synonyms=order update timestamp\n\nTABLE fact_sales_item -> CORTEX.MART.FACT_SALES_ITEM\nDESCRIPTION: Sales order line-item data where each row represents one product line within an order. Use this table for product-level sales, units sold, line revenue, selling price, and discounts.\n  order_item_id: Unique identifier for a sales order line item. | expr=order_item_id | synonyms=order line identifier, line item identifier\n  order_id: Identifier of the sales order containing the line item. | expr=order_id | synonyms=line order identifier\n  product_id: Identifier of the product sold on the line item. | expr=product_id | synonyms=line product identifier\n  quantity: Number of product units sold. Use for unit volume or quantity sold questions. | expr=quantity | aggregation=sum | synonyms=units sold, quantity sold, sales volume\n  unit_price: Selling price per unit recorded on a sales order line. | expr=unit_price | aggregation=avg | synonyms=line selling price, realized unit price\n  discount_amount: Discount amount applied to an individual sales order line. | expr=discount_amount | aggregation=sum | synonyms=line discount, line discount amount, discount applied to line\n  line_total: Sales value of a sales order line after applicable discounts. Use for product, category, sub-category, or brand-level sales analysis. | expr=line_total | aggregation=sum | synonyms=line sales, line revenue, product sales, line value\n  created_at: Timestamp when the sales line item record was created. | expr=created_at | synonyms=line item creation timestamp\n\nRELATIONSHIPS:\n{\'name\': \'sales_to_customer\', \'left_table\': \'fact_sales\', \'right_table\': \'dim_customer\', \'relationship_columns\': [{\'left_column\': \'customer_id\', \'right_column\': \'customer_id\'}], \'join_type\': \'left_outer\', \'relationship_type\': \'many_to_one\'}\n{\'name\': \'sales_to_sales_rep\', \'left_table\': \'fact_sales\', \'right_table\': \'dim_sales_rep\', \'relationship_columns\': [{\'left_column\': \'sales_rep_id\', \'right_column\': \'sales_rep_id\'}], \'join_type\': \'left_outer\', \'relationship_type\': \'many_to_one\'}\n{\'name\': \'sales_to_date\', \'left_table\': \'fact_sales\', \'right_table\': \'dim_date\', \'relationship_columns\': [{\'left_column\': \'order_date\', \'right_column\': \'date_key\'}], \'join_type\': \'left_outer\', \'relationship_type\': \'many_to_one\'}\n{\'name\': \'sales_item_to_sales\', \'left_table\': \'fact_sales_item\', \'right_table\': \'fact_sales\', \'relationship_columns\': [{\'left_column\': \'order_id\', \'right_column\': \'order_id\'}], \'join_type\': \'left_outer\', \'relationship_type\': \'many_to_one\'}\n{\'name\': \'sales_item_to_product\', \'left_table\': \'fact_sales_item\', \'right_table\': \'dim_product\', \'relationship_columns\': [{\'left_column\': \'product_id\', \'right_column\': \'product_id\'}], \'join_type\': \'left_outer\', \'relationship_type\': \'many_to_one\'}\n\nCUSTOM INSTRUCTIONS:\nInterpret user questions by business meaning, not by exact wording. Treat verified_queries as validated examples\nof correct SQL patterns, not as an exact-match question list. When a user\'s wording differs from a verified\nquestion, map the user\'s intent to the closest semantic concepts in this model and generate SQL using the defined\ndimensions, measures, relationships, and time dimensions.\n\nNatural-language mapping:\n- "sales", "revenue", "sales amount", "sales value", "sales dollars", "how much did we sell" generally refer to\n  SUM(fact_sales.total_amount) for order-level sales, unless the question is explicitly about products,\n  categories, brands, or line items, in which case use SUM(fact_sales_item.line_total).\n- "orders", "number of orders", "order volume", "transactions" generally refer to COUNT(fact_sales.order_id).\n- "units", "units sold", "quantity sold", "volume sold" refer to SUM(fact_sales_item.quantity).\n- "customers", "clients", "accounts" refer to dim_customer.\n- "products", "items", "merchandise" refer to dim_product.\n- "sales reps", "salespeople", "sellers", "representatives" refer to dim_sales_rep.\n- "channel" or "sales channel" refers to fact_sales.order_channel.\n- "region" should be interpreted from context: customer region means dim_customer.region; sales representative\n  region means dim_sales_rep.region.\n- "year", "quarter", "month", "week", "day", "calendar year" refer to dim_date calendar attributes.\n- "fiscal year" and "fiscal quarter" refer to dim_date.fiscal_year and dim_date.fiscal_quarter.\n- Explicit years such as 2000 or 2025 are filters on dim_date.year unless the user explicitly says fiscal year.\n- "top", "best", "leading", or "highest" normally means ORDER BY the requested measure DESC; if a count is requested,\n  rank by count; if sales/revenue is requested, rank by sales.\n- "lowest", "bottom", "worst", or "least" normally means ORDER BY the requested measure ASC.\n- "compare" means return the requested groups side by side using the same metric and grouping dimension.\n- "average order value" means AVG(fact_sales.total_amount) unless a different level is explicitly requested.\n- When the user asks for multiple dimensions or metrics, include all requested fields and group at the appropriate\n  grain. Do not silently drop a requested filter, grouping dimension, or metric.\n- Apply explicit filters such as year, category, region, channel, status, customer type, or numeric thresholds\n  in WHERE/HAVING as appropriate.\n- Use the existing relationships for joins. Do not invent columns, tables, metrics, categories, or business\n  definitions that are not present in the semantic model.\n- Prefer the semantic model\'s business fields over raw physical-table names.\n- If the request is ambiguous between order-level sales (total_amount) and product-line sales (line_total),\n  choose the grain implied by the question: customer/region/channel/order questions use total_amount; product,\n  category, sub-category, brand, or units questions use line_total/quantity as appropriate.\n- Verified queries are trusted SQL examples. Reuse their logic when the user\'s intent is similar, while adapting\n  filters, years, grouping dimensions, ranking limits, and requested metrics to the user\'s actual wording.\n- Do not require the user\'s wording to match a verified query verbatim.'
 
 
-# ------------------------------------------------------------------------------
-# Semantic model loader / retrieval
-# ------------------------------------------------------------------------------
-# Known-safe physical mappings. The YAML remains the semantic source of truth,
-# but these mappings prevent basic warehouse questions from failing if the
-# YAML file is not found in the Streamlit deployment directory.
-PHYSICAL_TABLE_FALLBACK = {
-    "dim_customer": "CORTEX.MART.DIM_CUSTOMER",
-    "dim_product": "CORTEX.MART.DIM_PRODUCT",
-    "dim_sales_rep": "CORTEX.MART.DIM_SALES_REP",
-    "dim_date": "CORTEX.MART.DIM_DATE",
-    "fact_sales": "CORTEX.MART.FACT_SALES",
-    "fact_sales_item": "CORTEX.MART.FACT_SALES_ITEM",
-}
-
-_yaml_candidates = [
-    os.getenv("SEMANTIC_MODEL_PATH", ""),
-    os.path.join(os.path.dirname(__file__), "sales_intelligence_model_enhanced.yaml"),
-    os.path.join(os.getcwd(), "sales_intelligence_model_enhanced.yaml"),
-]
-SEMANTIC_MODEL_PATH = next((p for p in _yaml_candidates if p and os.path.exists(p)), _yaml_candidates[1])
-
-@st.cache_data(show_spinner=False)
-def load_semantic_model(path: str) -> Dict[str, Any]:
-    """Load the YAML once and build a compact semantic catalog."""
+def _verified_examples(question: str, limit: int = 8) -> str:
     try:
-        with open(path, "r", encoding="utf-8") as fh:
-            model = yaml.safe_load(fh) or {}
+        examples = retrieve_verified_queries(question, top_k=limit)
     except Exception:
-        model = {"name": "Sales Intelligence Model", "tables": [], "verified_queries": []}
-
-    catalog = {
-        "name": model.get("name", "Sales Intelligence Model"),
-        "description": model.get("description", ""),
-        "tables": [],
-        "verified_queries": []
-    }
-
-    for table in model.get("tables", []) or []:
-        t = {
-            "name": table.get("name"),
-            "description": table.get("description", ""),
-            "base_table": table.get("base_table", {}),
-            "dimensions": [],
-            "measures": [],
-            "time_dimensions": []
-        }
-        for group in ("dimensions", "measures", "time_dimensions"):
-            for field in table.get(group, []) or []:
-                t[group].append({
-                    "name": field.get("name"),
-                    "description": field.get("description", ""),
-                    "synonyms": field.get("synonyms", []) or [],
-                    "expr": field.get("expr"),
-                    "data_type": field.get("data_type"),
-                    "default_aggregation": field.get("default_aggregation")
-                })
-        catalog["tables"].append(t)
-
-    for q in model.get("verified_queries", []) or []:
-        if q.get("question") and q.get("sql"):
-            catalog["verified_queries"].append({
-                "name": q.get("name", ""),
-                "question": q["question"],
-                "sql": q["sql"]
-            })
-    return catalog
+        examples = []
+    if not examples:
+        return "No closely related verified examples were found."
+    return "\n\n".join(
+        f"VERIFIED EXAMPLE {i}\nQuestion: {x.get('question','')}\nSQL:\n{clean_generated_sql(x.get('sql',''))}"
+        for i,x in enumerate(examples,1)
+    )
 
 
-SEMANTIC_MODEL = load_semantic_model(SEMANTIC_MODEL_PATH)
+def _extract_sql(raw: str) -> str:
+    raw=str(raw or "").strip()
+    raw=re.sub(r"```(?:sql)?","",raw,flags=re.I).replace("```","")
+    hit=re.search(r"(?is)\b(?:with|select)\b",raw)
+    if hit:
+        raw=raw[hit.start():]
+    if ";" in raw:
+        raw=raw.split(";",1)[0]
+    return clean_generated_sql(raw)
 
 
-def _semantic_text_for_table(table: Dict[str, Any]) -> str:
-    parts = [table.get("name", ""), table.get("description", "")]
-    for group in ("dimensions", "measures", "time_dimensions"):
-        for f in table.get(group, []):
-            parts.extend([f.get("name", ""), f.get("description", "")])
-            parts.extend(f.get("synonyms", []) or [])
-    return normalize_text(" ".join(parts))
+def _semantic_sql(question: str, conversation_context: str = "", repair_context: str = "") -> Optional[str]:
+    prompt=f"""
+You are the primary SQL reasoning engine for a production Snowflake Sales Copilot.
 
+Translate ANY user question that can be answered by this Sales Intelligence
+warehouse into one correct Snowflake SELECT/WITH query. Do not require exact
+wording from verified questions. Understand paraphrases, synonyms, business
+language, implicit intent, filters, dates, aggregations, rankings, HAVING,
+joins, comparisons, ratios, percentages and follow-up questions.
 
-def retrieve_verified_queries(question: str, top_k: int = 5) -> List[Dict[str, Any]]:
-    """Retrieve close verified examples without requiring exact wording."""
-    q = normalize_text(question)
-    if not q:
-        return []
-    scored = []
-    for item in SEMANTIC_MODEL.get("verified_queries", []):
-        candidate = normalize_text(item["question"])
-        seq = difflib.SequenceMatcher(None, q, candidate).ratio()
-        q_tokens, c_tokens = set(q.split()), set(candidate.split())
-        overlap = len(q_tokens & c_tokens) / max(1, len(q_tokens | c_tokens))
-        score = 0.65 * seq + 0.35 * overlap
-        scored.append((score, item))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [item for score, item in scored[:top_k] if score > 0.10]
+FULL SEMANTIC MODEL:
+{SEMANTIC_CATALOG}
 
-
-def build_semantic_prompt() -> str:
-    """Create a compact model-grounded catalog for Cortex rather than a hand-coded schema."""
-    lines = [
-        f"SEMANTIC MODEL: {SEMANTIC_MODEL.get('name')}",
-        SEMANTIC_MODEL.get("description", ""),
-        "TABLES AND BUSINESS MEANINGS:"
-    ]
-    for t in SEMANTIC_MODEL.get("tables", []):
-        bt = t.get("base_table", {})
-        physical = ".".join([x for x in [bt.get("database"), bt.get("schema"), bt.get("table")] if x])
-        lines.append(f"- {t['name']} -> {physical}: {t.get('description','')}")
-        for group in ("dimensions", "measures", "time_dimensions"):
-            for f in t.get(group, []):
-                syn = ", ".join(f.get("synonyms", []) or [])
-                extra = f"; synonyms={syn}" if syn else ""
-                agg = f"; default_aggregation={f.get('default_aggregation')}" if f.get("default_aggregation") else ""
-                lines.append(f"  * {group[:-1]} {f['name']}: {f.get('description','')}{extra}{agg}")
-    lines.extend([
-        "IMPORTANT GRAIN RULES:",
-        "- FACT_SALES is order/header grain. Use SUM(total_amount) for order-level sales, customer, region, channel, order and sales-rep metrics.",
-        "- FACT_SALES_ITEM is line-item grain. Use SUM(line_total) for product, category, sub-category, brand, quantity and product-level metrics.",
-        "- Never SUM FACT_SALES.total_amount after joining to FACT_SALES_ITEM unless the query first restores order grain; otherwise orders can be duplicated.",
-        "- Use DIM_DATE for year, month, quarter and date-related grouping/filtering.",
-        "- Use DIM_CUSTOMER for customer geography such as city, state, country, postal_code and region.",
-        "- If the model does not contain a requested field, do not invent it. Explain that it is unavailable.",
-        "- Return read-only SELECT/WITH SQL only. Never INSERT, UPDATE, DELETE, MERGE, DROP, ALTER, CREATE or TRUNCATE."
-    ])
-    return "\n".join(lines)
-
-
-SEMANTIC_PROMPT = build_semantic_prompt()
-
-
-def clean_generated_sql(raw_sql: str) -> str:
-    sql = str(raw_sql or "").strip()
-    sql = re.sub(r"^```(?:sql)?\s*", "", sql, flags=re.IGNORECASE)
-    sql = re.sub(r"\s*```$", "", sql).strip().rstrip(";").strip()
-    # Remove common assistant prefixes while preserving SQL.
-    sql = re.sub(r"^(?:SQL\s*:\s*)", "", sql, flags=re.IGNORECASE).strip()
-    return sql
-
-
-def validate_read_only_sql(sql: str) -> Tuple[bool, str]:
-    """Basic safety/quality gate before SQL reaches Snowflake."""
-    if not sql:
-        return False, "Empty SQL was generated."
-    normalized = re.sub(r"\s+", " ", sql.strip()).lower()
-    if not re.match(r"^(select|with)\b", normalized):
-        return False, "Only SELECT/WITH queries are allowed."
-    forbidden = r"\b(insert|update|delete|merge|drop|alter|create|truncate|grant|revoke|call|copy|put|remove)\b"
-    if re.search(forbidden, normalized):
-        return False, "The generated SQL contains a non-read-only operation."
-    # Allow the known warehouse tables even if YAML is temporarily unavailable.
-    allowed_tables = {v.lower() for v in PHYSICAL_TABLE_FALLBACK.values()}
-    for t in SEMANTIC_MODEL.get("tables", []):
-        bt = t.get("base_table", {})
-        if bt.get("database") and bt.get("schema") and bt.get("table"):
-            allowed_tables.add(f"{bt['database']}.{bt['schema']}.{bt['table']}".lower())
-    # Detect three-part physical references. CTE names are intentionally ignored.
-    for db, schema, table in re.findall(r"\b([A-Za-z_][\w$]*)\.([A-Za-z_][\w$]*)\.([A-Za-z_][\w$]*)\b", sql):
-        if f"{db}.{schema}.{table}".lower() not in allowed_tables:
-            return False, f"SQL references a table outside the semantic model: {db}.{schema}.{table}"
-    return True, ""
-
-
-def _physical_table(name: str) -> str:
-    """Resolve a semantic table using YAML first, then the safe fallback map."""
-    key = normalize_text(name).replace(" ", "_")
-    for t in SEMANTIC_MODEL.get("tables", []):
-        if normalize_text(t.get("name", "")).replace(" ", "_") == key:
-            bt = t.get("base_table", {})
-            parts = [bt.get("database"), bt.get("schema"), bt.get("table")]
-            physical = ".".join(str(x) for x in parts if x)
-            if physical:
-                return physical
-    return PHYSICAL_TABLE_FALLBACK.get(key, name)
-
-
-def _extract_year_from_question(question: str) -> Optional[int]:
-    match = re.search(r"\b(19\d{2}|20\d{2}|21\d{2})\b", question or "")
-    return int(match.group(1)) if match else None
-
-
-def _hard_reliable_sql(question: str) -> Optional[Tuple[str, str]]:
-    """Reliable SQL for common intents; intentionally independent of Cortex."""
-    q = normalize_text(question)
-    fs = PHYSICAL_TABLE_FALLBACK["fact_sales"]
-    fsi = PHYSICAL_TABLE_FALLBACK["fact_sales_item"]
-    dc = PHYSICAL_TABLE_FALLBACK["dim_customer"]
-    dp = PHYSICAL_TABLE_FALLBACK["dim_product"]
-    dr = PHYSICAL_TABLE_FALLBACK["dim_sales_rep"]
-    dd = PHYSICAL_TABLE_FALLBACK["dim_date"]
-    year = _extract_year_from_question(question)
-
-    sales = any(x in q for x in [
-        "sales", "revenue", "sales amount", "sales value", "turnover",
-        "selling amount", "sales revenue"
-    ])
-    total = any(x in q for x in [
-        "total", "overall", "sum", "how much", "amount", "value"
-    ])
-
-    # 1. Total sales / revenue / sales amount.
-    grouped = any(x in q for x in [
-        "by customer", "by client", "by account", "by product", "by item",
-        "by region", "by channel", "by month", "by year", "by category",
-        "by brand", "by sales rep", "by representative"
-    ])
-    if sales and total and not grouped:
-        join = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
-        where = f"\nWHERE {dd}.year = {year}" if year else ""
-        return (
-            "Total sales amount (order-level grain).",
-            f"SELECT ROUND(SUM({fs}.total_amount), 2) AS total_sales\nFROM {fs}{join}{where}"
-        )
-
-    # 2. Total sales by customer.
-    if sales and any(x in q for x in ["by customer", "by client", "by account"]):
-        join_date = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
-        where = f"\nWHERE {dd}.year = {year}" if year else ""
-        direction = "ASC" if any(x in q for x in ["lowest", "least", "bottom", "worst", "smallest"]) else "DESC"
-        lm = re.search(r"\b(?:top|bottom)\s+(\d+)\b", q)
-        limit = f"\nLIMIT {int(lm.group(1))}" if lm else ""
-        return (
-            "Sales by customer (order-level grain).",
-            f"SELECT {dc}.customer_name, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
-            f"FROM {fs}\nJOIN {dc} ON {fs}.customer_id = {dc}.customer_id"
-            f"{join_date}{where}\nGROUP BY {dc}.customer_name\n"
-            f"ORDER BY total_sales {direction}{limit}"
-        )
-
-    # 3. Sales by region.
-    if sales and "by region" in q:
-        join_date = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
-        where = f"\nWHERE {dd}.year = {year}" if year else ""
-        return (
-            "Sales by customer region.",
-            f"SELECT {dc}.region, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
-            f"FROM {fs}\nJOIN {dc} ON {fs}.customer_id = {dc}.customer_id"
-            f"{join_date}{where}\nGROUP BY {dc}.region\nORDER BY total_sales DESC"
-        )
-
-    # 4. Product/category/brand sales use line-item grain.
-    if sales and "by product" in q:
-        return (
-            "Sales by product (line-item grain).",
-            f"SELECT {dp}.product_name, ROUND(SUM({fsi}.line_total), 2) AS total_sales\n"
-            f"FROM {fsi}\nJOIN {dp} ON {fsi}.product_id = {dp}.product_id\n"
-            f"GROUP BY {dp}.product_name\nORDER BY total_sales DESC"
-        )
-    if sales and "by category" in q:
-        return (
-            "Sales by category (line-item grain).",
-            f"SELECT {dp}.category, ROUND(SUM({fsi}.line_total), 2) AS total_sales\n"
-            f"FROM {fsi}\nJOIN {dp} ON {fsi}.product_id = {dp}.product_id\n"
-            f"GROUP BY {dp}.category\nORDER BY total_sales DESC"
-        )
-    if sales and "by brand" in q:
-        return (
-            "Sales by brand (line-item grain).",
-            f"SELECT {dp}.brand, ROUND(SUM({fsi}.line_total), 2) AS total_sales\n"
-            f"FROM {fsi}\nJOIN {dp} ON {fsi}.product_id = {dp}.product_id\n"
-            f"GROUP BY {dp}.brand\nORDER BY total_sales DESC"
-        )
-
-    # 5. Orders.
-    if any(x in q for x in ["how many orders", "number of orders", "order count", "count of orders"]):
-        join = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
-        where = f"\nWHERE {dd}.year = {year}" if year else ""
-        return ("Order count.", f"SELECT COUNT({fs}.order_id) AS order_count\nFROM {fs}{join}{where}")
-
-    # 6. Average order value.
-    if any(x in q for x in ["average order value", "avg order value", "average order amount", "mean order value"]):
-        join = f"\nJOIN {dd} ON {fs}.order_date = {dd}.date_key" if year else ""
-        where = f"\nWHERE {dd}.year = {year}" if year else ""
-        return ("Average order value.", f"SELECT ROUND(AVG({fs}.total_amount), 2) AS average_order_value\nFROM {fs}{join}{where}")
-
-    # 7. Sales by channel / sales rep.
-    if sales and "by channel" in q:
-        return (
-            "Sales by order channel.",
-            f"SELECT {fs}.order_channel, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
-            f"FROM {fs}\nGROUP BY {fs}.order_channel\nORDER BY total_sales DESC"
-        )
-    if sales and any(x in q for x in ["by sales rep", "by sales representative", "by representative"]):
-        return (
-            "Sales by sales representative.",
-            f"SELECT {dr}.sales_rep_name, ROUND(SUM({fs}.total_amount), 2) AS total_sales\n"
-            f"FROM {fs}\nJOIN {dr} ON {fs}.sales_rep_id = {dr}.sales_rep_id\n"
-            f"GROUP BY {dr}.sales_rep_name\nORDER BY total_sales DESC"
-        )
-
-    return None
-
-
-def _select_relevant_semantic_context(question: str, max_tables: int = 6, max_examples: int = 8) -> str:
-    """Build a compact semantic context from the YAML model."""
-    q = normalize_text(question)
-    scored = []
-
-    for table in SEMANTIC_MODEL.get("tables", []):
-        semantic_text = _semantic_text_for_table(table)
-        qt = set(q.split())
-        st = set(semantic_text.split())
-        overlap = len(qt & st) / max(1, len(qt | st))
-        seq = difflib.SequenceMatcher(None, q, semantic_text[:1500]).ratio()
-        score = 0.65 * overlap + 0.35 * seq
-
-        # Always favor the fact/date tables because they define grain and time.
-        if normalize_text(table.get("name", "")) in {"fact_sales", "fact_sales_item", "dim_date"}:
-            score += 0.20
-        scored.append((score, table))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    selected = [t for _, t in scored[:max_tables]]
-
-    lines = [
-        f"SEMANTIC MODEL: {SEMANTIC_MODEL.get('name', 'Sales Intelligence Model')}",
-        SEMANTIC_MODEL.get("description", ""),
-        "",
-        "TABLES AND FIELDS:"
-    ]
-
-    for table in selected:
-        bt = table.get("base_table", {})
-        physical = ".".join(str(x) for x in [
-            bt.get("database"), bt.get("schema"), bt.get("table")
-        ] if x)
-        lines.append(f"TABLE {table.get('name')} -> {physical}")
-        lines.append(f"DESCRIPTION: {table.get('description', '')}")
-
-        for group in ("dimensions", "measures", "time_dimensions"):
-            for field in table.get(group, []):
-                line = f"- {field.get('name')}: {field.get('description', '')}"
-                syn = field.get("synonyms", []) or []
-                if syn:
-                    line += " | synonyms: " + ", ".join(map(str, syn))
-                if field.get("expr"):
-                    line += " | expr: " + str(field["expr"])
-                if field.get("default_aggregation"):
-                    line += " | default aggregation: " + str(field["default_aggregation"])
-                lines.append(line)
-
-    lines.extend([
-        "",
-        "CRITICAL BUSINESS GRAIN:",
-        "FACT_SALES = one row per order/header. FACT_SALES.total_amount is the order-level sales amount.",
-        "FACT_SALES_ITEM = one row per product line. FACT_SALES_ITEM.line_total is the product-line sales amount.",
-        "Use FACT_SALES.total_amount for total sales, customer, region, channel, order and sales-rep metrics.",
-        "Use FACT_SALES_ITEM.line_total for product, category, brand and product-line metrics.",
-        "Never sum FACT_SALES.total_amount after a one-to-many join to FACT_SALES_ITEM unless order grain is restored.",
-        "DIM_DATE is authoritative for year/month/quarter/date analysis.",
-        "Use only fields represented by the model; never invent columns."
-    ])
-
-    examples = retrieve_verified_queries(question, top_k=max_examples)
-    if examples:
-        lines.append("")
-        lines.append("VERIFIED QUERY EXAMPLES — use as semantic patterns, not exact-match requirements:")
-        for i, example in enumerate(examples, 1):
-            sql = clean_generated_sql(example["sql"])
-            if len(sql) > 2400:
-                sql = sql[:2400] + "\n-- example truncated"
-            lines.append(f"EXAMPLE {i}: {example['question']}\n{sql}")
-
-    return "\n".join(lines)
-
-
-def _extract_sql_from_llm(raw: str) -> str:
-    """Extract the SQL portion when a model adds markdown or short prose."""
-    sql = clean_generated_sql(raw)
-    match = re.search(r"(?is)\b(with|select)\b.*", sql)
-    if match:
-        sql = sql[match.start():]
-    if ";" in sql:
-        sql = sql.split(";", 1)[0]
-    return clean_generated_sql(sql)
-
-
-def _llm_sql_generation(
-    question: str,
-    conversation_context: str = "",
-    repair_context: str = ""
-) -> Optional[str]:
-    """General natural-language-to-SQL reasoning grounded in the YAML."""
-    semantic_context = _select_relevant_semantic_context(question)
-
-    prompt_text = f"""
-You are the primary SQL reasoning engine for a Snowflake Sales Intelligence warehouse.
-
-Translate ANY answerable business question about the supplied semantic model into
-one correct Snowflake SQL query. Do not rely on exact wording from verified
-queries. Understand paraphrases, business language, filters, rankings,
-comparisons, dates, aggregations, and multi-dimensional questions.
-
-{semantic_context}
+VERIFIED EXAMPLES:
+{_verified_examples(question)}
 
 RECENT CONVERSATION:
-{conversation_context[-6000:] if conversation_context else "None"}
+{conversation_context[-8000:] if conversation_context else "None"}
 
 {repair_context}
 
 USER QUESTION:
 {question}
 
-REQUIREMENTS:
-1. Return ONLY one executable SELECT/WITH query.
-2. Use only tables and columns supported by the semantic model.
-3. Apply every explicit filter, date condition, grouping, ranking and comparison.
-4. Use DIM_DATE for calendar/time analysis when available.
-5. Select the correct measure from the semantic meaning, not from a keyword.
-6. Respect grain:
-   - order-level: FACT_SALES.total_amount
-   - line/product-level: FACT_SALES_ITEM.line_total
-7. Prevent fan-out duplication when mixing order and line-item facts.
-8. For top/bottom/best/worst, sort the requested metric in the requested direction and honor explicit N.
-9. For comparisons, return both sides and calculate requested differences/percentages.
-10. Use NULLIF for percentage-change denominators.
-11. Use exact physical table/column names from the model.
-12. Never invent a field. If the question cannot be answered from this model, do not fabricate one.
-13. Never produce write operations or administrative statements.
-14. Do not use SELECT * unless explicitly requested.
-15. The final SQL must be safe for direct execution in Snowflake.
-"""
+NON-NEGOTIABLE GRAIN RULES:
+- FACT_SALES is order/header grain.
+- FACT_SALES.total_amount is order-level sales.
+- FACT_SALES_ITEM is product-line grain.
+- FACT_SALES_ITEM.line_total is product-line sales.
+- Customer, region, channel, order and sales-rep sales normally use FACT_SALES.total_amount.
+- Product, category and brand sales normally use FACT_SALES_ITEM.line_total.
+- Never sum order-level total_amount after a one-to-many line-item join without restoring order grain.
+- DIM_DATE is authoritative for year/month/quarter/date analysis.
 
-    # Try a stronger model first, then compatible fallbacks. If a model is not
-    # enabled in the account, the exception is simply ignored.
-    for model in [
-        "claude-sonnet-4-5",
-        "llama3.3-70b",
-        "llama3.1-70b",
-        "llama3.1-8b",
-        "mistral-7b",
-    ]:
+SQL RULES:
+1. Infer meaning rather than matching keywords.
+2. Apply EVERY requested filter, grouping, date condition and ranking.
+3. Use the exact fields in the semantic model; never invent columns.
+4. Correctly interpret total/sum, average, count, min/max, percentages and ratios.
+5. Correctly interpret top/bottom/highest/lowest/best/worst and explicit N.
+6. Correctly interpret comparisons and percentage change using NULLIF.
+7. Use GROUP BY/HAVING correctly.
+8. Use date dimension fields for date analysis.
+9. Return ONE executable Snowflake SELECT or WITH statement only.
+10. Never generate write or DDL statements.
+11. Do not use SELECT * unless explicitly requested.
+12. If the request genuinely cannot be answered from the model, return CANNOT_ANSWER_FROM_MODEL.
+
+{repair_context}
+"""
+    for model_name in ["claude-sonnet-4-5","llama3.3-70b","llama3.1-70b","llama3.1-8b","mistral-7b"]:
         try:
-            rows = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS SQL_OUT",
-                params=[model, prompt_text]
+            rows=session.sql(
+                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS sql_out",
+                params=[model_name,prompt]
             ).collect()
             if not rows:
                 continue
-
-            raw = str(rows[0]["SQL_OUT"])
-            sql = _extract_sql_from_llm(raw)
-
-            if re.fullmatch(r"CANNOT_ANSWER_FROM_MODEL", sql, flags=re.IGNORECASE):
+            raw=str(rows[0]["SQL_OUT"])
+            if "CANNOT_ANSWER_FROM_MODEL" in raw.upper():
                 continue
-
-            safe, _ = validate_read_only_sql(sql)
-            if safe:
-                return sql
+            sql=_extract_sql(raw)
+            if not (sql.lower().startswith("select") or sql.lower().startswith("with")):
+                continue
+            return sql
         except Exception:
             continue
-
     return None
 
 
-def _repair_sql_from_database_error(
-    question: str,
-    sql: str,
-    db_error: str,
-    conversation_context: str = ""
-) -> Optional[str]:
-    """Regenerate SQL using the real Snowflake execution error as feedback."""
-    repair_context = f"""
-A previous SQL draft was generated for the same question.
+def _repair_sql(question: str, sql: str, error_text: str, conversation_context: str = "") -> Optional[str]:
+    return _semantic_sql(
+        question,
+        conversation_context,
+        f"""
+The previous SQL failed in Snowflake.
 
 PREVIOUS SQL:
 {sql}
 
-SNOWFLAKE ERROR:
-{db_error[:6000]}
+ACTUAL SNOWFLAKE ERROR:
+{error_text[:6000]}
 
-Fix the SQL based on the actual Snowflake error while preserving the original
-business intent. Return only the corrected SQL.
+Repair the query while preserving the original business intent. Return only SQL.
 """
-    return _llm_sql_generation(question, conversation_context, repair_context)
+    )
 
 
-def generate_sql_for_database(
-    prompt: str,
-    conversation_context: str = ""
-) -> Tuple[str, Optional[str]]:
-    """General warehouse question answering.
+def generate_sql_for_database(prompt: str, conversation_context: str = "") -> Tuple[str, Optional[str]]:
+    """General warehouse reasoning. No fixed question list is required."""
+    norm_p=normalize_text(prompt)
+    if norm_p in ["hi","hello","hey","help","who are you","good morning","good evening"]:
+        return "Hello! I am your Sales Intelligence Assistant. Ask any question about the enterprise sales warehouse.",None
+    if "county" in norm_p:
+        return ("⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. "
+                "Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`."),None
 
-    Semantic LLM reasoning is the primary path. Deterministic SQL exists only
-    as a last-resort availability layer.
-    """
+    # Primary path: full semantic model + natural-language reasoning.
+    sql=_semantic_sql(prompt,conversation_context)
+    if sql:
+        return f"Generated from the Sales Intelligence semantic model for: **{prompt}**",sql
+
+    # Preserve the original generator as a fallback so existing behavior is not lost.
+    legacy=_legacy_generate_sql_for_database(prompt)
+    if legacy[1]:
+        return legacy
+
+    return "I could not generate a safe warehouse query for this question.",None
+
+
+def _legacy_generate_sql_for_database(prompt: str) -> Tuple[str, Optional[str]]:
+    p = prompt.lower().strip()
     norm_p = normalize_text(prompt)
 
-    if norm_p in {"hi", "hello", "hey", "help", "who are you", "good morning", "good evening"}:
-        return (
-            "Hello! I am your Sales Intelligence Assistant. Ask me anything "
-            "that can be answered from the Sales Intelligence warehouse."
-        ), None
+    # 1. Greetings
+    if norm_p in ["hi", "hello", "hey", "help", "who are you", "good morning", "good evening"]:
+        return "Hello! I am your Sales Intelligence Assistant. Ask any question about enterprise revenue, customers, products, regions, or time trends.", None
 
-    # PRIMARY: general semantic reasoning.
-    sql = _llm_sql_generation(prompt, conversation_context)
-    if sql:
-        return (
-            f"Interpreting your question from the Sales Intelligence semantic model: **{prompt}**",
-            sql
-        )
+    # 2. Guardrail for known missing dimensions
+    if "county" in p:
+        return "⚠️ The Snowflake Data Mart (`CORTEX.MART`) does not contain a `county` dimension. Customer geographic data is tracked by `city`, `state`, `country`, `postal_code`, and `region`.", None
 
-    # SECONDARY: deterministic availability safety-net.
-    reliable = _hard_reliable_sql(prompt)
-    if reliable:
-        safe, _ = validate_read_only_sql(reliable[1])
-        if safe:
-            return reliable
+    # 3. Detect Directionality (Least / Lowest vs Most / Top)
+    is_ascending = any(k in p for k in ["least", "lowest", "bottom", "worst", "minimum", "min", "smallest", "fewest"])
+    sort_dir = "ASC" if is_ascending else "DESC"
+    rank_label = "bottom (least)" if is_ascending else "top"
 
-    # LAST: verified-query pattern fallback.
-    for example in retrieve_verified_queries(prompt, top_k=5):
-        sql = clean_generated_sql(example["sql"])
-        for key, physical in PHYSICAL_TABLE_FALLBACK.items():
-            sql = re.sub(
-                rf"\b__{re.escape(key)}\b",
-                physical,
-                sql,
-                flags=re.IGNORECASE
-            )
-        safe, _ = validate_read_only_sql(sql)
-        if safe:
-            return f"Using a verified semantic pattern related to: **{prompt}**", sql
+    # 4. Detect Explicit Limits (e.g., "top 5", "least 3", default 10)
+    limit_match = re.search(r'\b(top|least|bottom|first|limit)\s+(\d+)\b', p)
+    record_limit = int(limit_match.group(2)) if limit_match else 10
 
-    return (
-        "I could not generate a safe warehouse query for this question. "
-        "No unsupported data was fabricated."
-    ), None
+    # 5. Extract Years
+    year_match = re.search(r'\b(19\d\d|20\d\d)\b', p)
+    target_year = year_match.group(1) if year_match else None
+
+    # 6. Resolve Aggregation Metric
+    is_avg = any(k in p for k in ["average", "avg", "mean"])
+    is_count = any(k in p for k in ["count", "number of orders", "order volume", "how many orders", "order count"])
+    
+    if is_avg:
+        metric_agg = "ROUND(AVG(s.total_amount), 2)"
+        item_agg = "ROUND(AVG(si.line_total), 2)"
+        alias = "average_sales"
+        metric_label = "average sales"
+    elif is_count:
+        metric_agg = "COUNT(s.order_id)"
+        item_agg = "COUNT(si.order_item_id)"
+        alias = "order_count"
+        metric_label = "order count"
+    else:
+        metric_agg = "SUM(s.total_amount)"
+        item_agg = "SUM(si.line_total)"
+        alias = "total_sales"
+        metric_label = "total sales"
+
+    # 7. Semantic Query Generators with Directionality
+
+    # Product-level queries (handles: "which product has least sales?", "top products", etc.)
+    if any(k in p for k in ["product", "item", "sku"]) and not any(k in p for k in ["category", "brand"]):
+        year_filter = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    p.product_name,
+    {item_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM si
+JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+{year_filter}
+GROUP BY p.product_name
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
+        """.strip()
+        year_desc = f" for year {target_year}" if target_year else ""
+        return f"Ranking {rank_label} products by {metric_label}{year_desc}:", sql
+
+    # Category queries (handles: "least sales category", "top categories")
+    if any(k in p for k in ["category", "categories", "sub-category", "subcategory"]):
+        year_filter = f"JOIN CORTEX.MART.FACT_SALES s ON si.order_id = s.order_id JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    p.category,
+    {item_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM si
+JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+{year_filter}
+GROUP BY p.category
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
+        """.strip()
+        year_desc = f" for year {target_year}" if target_year else ""
+        return f"Ranking {rank_label} product categories by {metric_label}{year_desc}:", sql
+
+    # Brand queries
+    if "brand" in p:
+        sql = f"""
+SELECT 
+    p.brand,
+    {item_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES_ITEM si
+JOIN CORTEX.MART.DIM_PRODUCT p ON si.product_id = p.product_id
+GROUP BY p.brand
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
+        """.strip()
+        return f"Ranking {rank_label} brands by {metric_label}:", sql
+
+    # Customer queries
+    if "customer" in p and not any(k in p for k in ["region", "industry", "type"]):
+        sql = f"""
+SELECT 
+    c.customer_name,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
+GROUP BY c.customer_name
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
+        """.strip()
+        return f"Ranking {rank_label} customers by {metric_label}:", sql
+
+    # Sales Rep queries
+    if any(k in p for k in ["rep", "salesperson", "representative"]):
+        sql = f"""
+SELECT 
+    r.sales_rep_name,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_SALES_REP r ON s.sales_rep_id = r.sales_rep_id
+GROUP BY r.sales_rep_name
+ORDER BY {alias} {sort_dir}
+LIMIT {record_limit}
+        """.strip()
+        return f"Ranking {rank_label} sales representatives by {metric_label}:", sql
+
+    # Region queries (handles: "region wise total sales", "sales by region")
+    if "region" in p:
+        year_clause = f"JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    c.region,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_CUSTOMER c ON s.customer_id = c.customer_id
+{year_clause}
+GROUP BY c.region
+ORDER BY {alias} {sort_dir}
+        """.strip()
+        year_desc = f" for year {target_year}" if target_year else ""
+        return f"Sales by customer region{year_desc} (sorted {sort_dir}):", sql
+
+    # Month / Monthly queries
+    if any(k in p for k in ["month", "monthly"]):
+        year_clause = f"WHERE d.year = {target_year}" if target_year else ""
+        sql = f"""
+SELECT 
+    d.year,
+    d.month,
+    d.month_name,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
+{year_clause}
+GROUP BY d.year, d.month, d.month_name
+ORDER BY d.year, d.month ASC
+        """.strip()
+        return f"Monthly {metric_label}:", sql
+
+    # Specific Year Query
+    if target_year:
+        sql = f"""
+SELECT 
+    d.year,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
+WHERE d.year = {target_year}
+GROUP BY d.year
+        """.strip()
+        return f"Total sales for year {target_year}:", sql
+
+    # Yearly trend across all calendar years
+    if any(k in p for k in ["year wise", "yearly", "annual", "by year"]):
+        sql = f"""
+SELECT 
+    d.year,
+    {metric_agg} AS {alias}
+FROM CORTEX.MART.FACT_SALES s
+JOIN CORTEX.MART.DIM_DATE d ON s.order_date = d.date_key
+GROUP BY d.year
+ORDER BY d.year ASC
+        """.strip()
+        return f"Yearly trend across all calendar years:", sql
+
+    # Total / Overall Sales (e.g. "what is the total sales", "overall sales")
+    if any(k in p for k in ["total sales", "total revenue", "overall sales", "sales amount", "gross sales"]):
+        sql = f"SELECT {metric_agg} AS {alias} FROM CORTEX.MART.FACT_SALES s"
+        return f"Calculating overall {metric_label} across all orders:", sql
+
+    # 8. Snowflake Cortex Fallback
+    cortex_instruction = (
+        f"You are a Snowflake SQL generator for database CORTEX, schema MART.\n"
+        f"Tables:\n"
+        f"- FACT_SALES s (order_id, customer_id, sales_rep_id, order_status, order_channel, order_date, total_amount)\n"
+        f"- FACT_SALES_ITEM si (order_item_id, order_id, product_id, quantity, unit_price, line_total)\n"
+        f"- DIM_CUSTOMER c (customer_id, customer_name, customer_type, industry, city, state, country, region)\n"
+        f"- DIM_PRODUCT p (product_id, product_name, category, sub_category, brand)\n"
+        f"- DIM_SALES_REP r (sales_rep_id, sales_rep_name, region)\n"
+        f"- DIM_DATE d (date_key, year, month, month_name, quarter)\n"
+        f"Joins:\n"
+        f"- s.customer_id = c.customer_id\n"
+        f"- s.order_date = d.date_key\n"
+        f"- si.order_id = s.order_id\n"
+        f"- si.product_id = p.product_id\n"
+        f"- s.sales_rep_id = r.sales_rep_id\n"
+        f"Return ONLY valid Snowflake SQL without markdown formatting or backticks for: {prompt}"
+    )
+
+    for model in ['llama3.1-8b', 'mistral-7b']:
+        try:
+            res = session.sql(
+                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS sql_out",
+                params=[model, cortex_instruction]
+            ).collect()
+            raw_sql = res[0]["SQL_OUT"].strip()
+            clean_sql = re.sub(r"^```(sql)?", "", raw_sql, flags=re.IGNORECASE).strip().rstrip("`").strip()
+            if clean_sql.lower().startswith("select") or clean_sql.lower().startswith("with"):
+                return f"Generated SQL for: **{prompt}**", clean_sql
+        except Exception:
+            continue
+
+    return "I could not formulate a query for this question. Please ask about sales revenue, averages, products, customers, or regions.", None
 
 # ==============================================================================
 # 6. ENHANCED DOCUMENT INTELLIGENCE & ACCURATE TABULAR QA
@@ -789,154 +616,93 @@ def extract_text_from_docx(file_bytes: bytes) -> str:
     except Exception as exc:
         return f"Error extracting Word document: {str(exc)}"
 
-def _normalized_column_map(df: pd.DataFrame) -> Dict[str, str]:
-    mapping = {}
-    for col in df.columns:
-        n = normalize_text(str(col)).replace(" ", "_")
-        mapping[n] = col
-        mapping[n.replace("_", "")] = col
-    return mapping
-
-
-def _find_semantic_column(question: str, columns: List[str]) -> Optional[str]:
-    """Map natural-language column references to the real dataframe column."""
-    q = normalize_text(question)
-    best = (0.0, None)
-    for col in columns:
-        c = normalize_text(str(col))
-        score = difflib.SequenceMatcher(None, q, c).ratio()
-        tokens = set(q.split()) & set(c.split())
-        if tokens:
-            score += min(0.30, 0.10 * len(tokens))
-        if c and c in q:
-            score += 0.45
-        if score > best[0]:
-            best = (score, col)
-    return best[1] if best[0] >= 0.55 else None
-
-
-def _document_dataframe_answer(question: str, df: pd.DataFrame, filename: str) -> Optional[str]:
-    """Answer common spreadsheet questions deterministically on the full dataframe."""
-    if df is None or df.empty:
-        return None
-    q = normalize_text(question)
-    cols = list(df.columns)
-    numeric_cols = df.select_dtypes(include="number").columns.tolist()
-    if not numeric_cols:
-        return None
-
-    # Find a metric column using column semantics, not a 150-row preview.
-    metric_candidates = []
-    for col in numeric_cols:
-        c = normalize_text(str(col))
-        score = 0
-        if any(k in c for k in ["sales", "sale", "revenue", "amount", "total", "value", "price"]):
-            score += 0.5
-        if any(k in q for k in ["sales", "revenue", "amount", "total", "value", "price"]):
-            score += 0.2
-        score += difflib.SequenceMatcher(None, q, c).ratio() * 0.3
-        metric_candidates.append((score, col))
-    metric_col = sorted(metric_candidates, reverse=True)[0][1]
-
-    is_avg = any(k in q.split() for k in ["average", "avg", "mean"])
-    is_count = any(k in q for k in ["count", "how many", "number of records", "number of rows"])
-    is_min = any(k in q for k in ["minimum", "min", "lowest", "least", "smallest"])
-    is_max = any(k in q for k in ["maximum", "max", "highest", "most", "largest", "best"])
-
-    # Try explicit year filtering against a year/date column.
-    year_match = re.search(r"\b(19\d{2}|20\d{2})\b", q)
-    working = df.copy()
-    if year_match:
-        year = int(year_match.group(1))
-        year_cols = [c for c in cols if "year" in normalize_text(str(c))]
-        date_cols = [c for c in cols if "date" in normalize_text(str(c))]
-        if year_cols:
-            vals = pd.to_numeric(working[year_cols[0]], errors="coerce")
-            working = working[vals == year]
-        elif date_cols:
-            dates = pd.to_datetime(working[date_cols[0]], errors="coerce")
-            working = working[dates.dt.year == year]
-
-    if working.empty:
-        return f"In **`{filename}`**, no records matched the requested filter."
-
-    if is_count:
-        return f"In **`{filename}`**, the matching record count is **{len(working):,}**."
-    if is_avg:
-        val = pd.to_numeric(working[metric_col], errors="coerce").mean()
-        return f"In **`{filename}`**, the average **{metric_col}** is **{val:,.2f}**."
-    if is_min:
-        val = pd.to_numeric(working[metric_col], errors="coerce").min()
-        return f"In **`{filename}`**, the minimum **{metric_col}** is **{val:,.2f}**."
-    if is_max:
-        val = pd.to_numeric(working[metric_col], errors="coerce").max()
-        return f"In **`{filename}`**, the maximum **{metric_col}** is **{val:,.2f}**."
-
-    # Group-by questions such as "sales by region/category/month".
-    group_terms = ["region", "category", "subcategory", "sub category", "brand", "customer", "product", "state", "city", "month", "year", "quarter"]
-    for term in group_terms:
-        if term in q:
-            candidates = [c for c in cols if term.replace(" ", "") in normalize_text(str(c)).replace(" ", "")]
-            if candidates:
-                gcol = candidates[0]
-                temp = working.copy()
-                temp[metric_col] = pd.to_numeric(temp[metric_col], errors="coerce")
-                result = temp.groupby(gcol, dropna=False)[metric_col].sum().reset_index().sort_values(metric_col, ascending=False)
-                result = result.head(10)
-                return f"Here are the top results by **{gcol}** from `{filename}`:\n\n" + result.to_markdown(index=False)
-
-    total = pd.to_numeric(working[metric_col], errors="coerce").sum()
-    return f"In **`{filename}`**, the total **{metric_col}** for the matching records is **{total:,.2f}**."
-
-
 def answer_user_question_on_document(question: str, doc_context: str, filename: str, df: Optional[pd.DataFrame] = None) -> str:
-    """Hybrid document QA: deterministic full-data spreadsheet answers + retrieved text QA."""
-    if df is not None:
-        deterministic = _document_dataframe_answer(question, df, filename)
-        if deterministic:
-            return deterministic
+    q_lower = question.lower().strip()
 
-    # Keep the most relevant text instead of blindly truncating at 10k chars.
-    text = str(doc_context or "")
-    if not text:
-        return f"The uploaded document (`{filename}`) contains no readable text."
+    # Priority 1: Direct High-Accuracy Pandas Tabular Analytics
+    if df is not None and not df.empty:
+        col_map = {col.lower().strip(): col for col in df.columns}
+        matched_target_col = None
+        for c_lower, c_orig in col_map.items():
+            stem = c_lower.rstrip('s')
+            if stem in q_lower or (stem.endswith('y') and stem[:-1] + 'ies' in q_lower):
+                matched_target_col = c_orig
+                break
 
-    q_terms = [t for t in re.findall(r"[a-zA-Z0-9]+", question.lower()) if len(t) > 2]
-    paragraphs = re.split(r"\n\s*\n|(?<=\.)\s+(?=[A-Z])", text)
-    scored = []
-    qset = set(q_terms)
-    for para in paragraphs:
-        pset = set(re.findall(r"[a-zA-Z0-9]+", para.lower()))
-        overlap = len(qset & pset)
-        if overlap:
-            scored.append((overlap / max(1, len(qset)), para))
-    scored.sort(key=lambda x: x[0], reverse=True)
-    chunks = [p for _, p in scored[:8]]
-    if not chunks:
-        chunks = paragraphs[:6]
-    context = "\n\n".join(chunks)[:16000]
+        is_count_query = any(k in q_lower for k in ["how many", "count", "number of", "total", "distinct", "unique"])
+        is_list_query = any(k in q_lower for k in ["list", "what are", "show", "names of", "give me"])
 
-    prompt = f"""Answer the user's question using ONLY the supplied document excerpts.
-If the excerpts do not contain the answer, say that the document does not contain enough information.
-Do not invent facts, calculations, names, dates or values.
+        if matched_target_col and is_count_query:
+            valid_entries = df[matched_target_col].dropna()
+            valid_entries = valid_entries[valid_entries.astype(str).str.strip().str.lower() != 'none']
+            total_rows = len(valid_entries)
+            unique_count = valid_entries.nunique()
+            unique_vals = list(valid_entries.unique())
 
-DOCUMENT: {filename}
-EXCERPTS:
-{context}
+            sample_str = ", ".join([f"`{str(v)}`" for v in unique_vals[:8]])
+            if len(unique_vals) > 8:
+                sample_str += f" and {len(unique_vals) - 8} more..."
 
-QUESTION: {question}"""
-    for model in ["llama3.1-8b", "mistral-7b"]:
+            return (
+                f"In **`{filename}`**, there are **{unique_count} unique {matched_target_col}s** "
+                f"(across **{total_rows}** total populated records).\n\n"
+                f"**Entries:** {sample_str}"
+            )
+
+        if matched_target_col and is_list_query:
+            valid_entries = df[matched_target_col].dropna()
+            valid_entries = valid_entries[valid_entries.astype(str).str.strip().str.lower() != 'none']
+            unique_vals = list(valid_entries.unique())
+            val_bullets = "\n".join([f"• {str(v)}" for v in unique_vals])
+            return f"**List of {matched_target_col}s in `{filename}` ({len(unique_vals)} unique):**\n\n{val_bullets}"
+
+        words = [w for w in re.findall(r'\b[a-zA-Z0-9_]+\b', q_lower) if len(w) > 2 and w not in [
+            "what", "is", "the", "are", "sales", "for", "total", "average", "avg", 
+            "count", "show", "give", "list", "of", "in", "by", "all", "me", "find",
+            "county", "state", "city", "district", "value", "how", "many"
+        ]]
+        
+        mask = pd.Series(False, index=df.index)
+        for col in df.columns:
+            for word in words:
+                mask = mask | df[col].astype(str).str.lower().str.contains(r'\b' + re.escape(word) + r'\b', na=False)
+        
+        matched_df = df[mask]
+        
+        if not matched_df.empty:
+            numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+            sales_cols = [c for c in numeric_cols if any(k in c.lower() for k in ["sale", "amount", "revenue", "total", "val"])]
+            target_metric_col = sales_cols[0] if sales_cols else (numeric_cols[0] if numeric_cols else None)
+
+            if target_metric_col:
+                total_val = matched_df[target_metric_col].sum()
+                avg_val = matched_df[target_metric_col].mean()
+                count_val = len(matched_df)
+                matched_entity = ' '.join(words).title() if words else "the requested entity"
+
+                if any(k in q_lower for k in ["average", "avg", "mean"]):
+                    return f"In **`{filename}`**, the average **{target_metric_col}** for **{matched_entity}** is **{avg_val:,.2f}** ({count_val} matching records found)."
+                else:
+                    return f"In **`{filename}`**, the total **{target_metric_col}** for **{matched_entity}** is **{total_val:,.2f}** ({count_val} matching records found)."
+            else:
+                preview = matched_df.dropna(how='all', axis=1).head(15)
+                return f"Found **{len(matched_df)}** matching record(s) in **`{filename}`**:\n\n" + preview.to_markdown(index=False)
+
+    # Priority 2: Generative Cortex QA with Document Context
+    clean_doc = doc_context[:10000].replace("'", "''")
+    clean_q = question.replace("'", "''")
+    prompt = f"Answer factually using only this data from {filename}:\n\n{clean_doc}\n\nQuestion: {clean_q}"
+    
+    for model in ['llama3.1-8b', 'mistral-7b']:
         try:
-            res = session.sql(
-                "SELECT SNOWFLAKE.CORTEX.COMPLETE(?, ?) AS answer",
-                params=[model, prompt]
-            ).collect()
-            ans = str(res[0]["ANSWER"] or "").strip()
-            if ans:
+            res = session.sql(f"SELECT SNOWFLAKE.CORTEX.COMPLETE('{model}', '{prompt}') AS answer").collect()
+            ans = res[0]["ANSWER"].strip()
+            if ans and len(ans) > 2:
                 return ans
         except Exception:
             continue
-    return f"The uploaded document (`{filename}`) does not contain enough information to answer this query."
+
+    return f"The uploaded document (`{filename}`) does not contain information to answer this query."
 
 def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame], Optional[str]]:
     uploaded_file.seek(0)
@@ -956,8 +722,8 @@ def process_uploaded_document(uploaded_file) -> Tuple[str, Optional[pd.DataFrame
             df = extract_df_from_xlsx(file_bytes)
             
         clean_df = df.dropna(how='all')
-        context_str = f"File: {filename}\nTotal Rows: {len(clean_df)}\nColumns: {', '.join(map(str, clean_df.columns))}\n\nSAMPLE RECORDS:\n"
-        context_str += clean_df.head(50).to_string(index=False)
+        context_str = f"File: {filename}\nTotal Rows: {len(clean_df)}\nColumns: {', '.join(clean_df.columns)}\n\nDATA PREVIEW AND RECORDS:\n"
+        context_str += clean_df.to_string(max_rows=150)
         
         summary = (
             f"Successfully processed **`{filename}`** with **{len(clean_df):,} rows** and **{len(clean_df.columns)} columns**.\n\n"
@@ -1251,7 +1017,7 @@ if user_prompt:
         else:
             source_label = "Snowflake Data Mart (CORTEX.MART)"
             with st.spinner("Analyzing Snowflake Data Mart..."):
-                recent_context = "\n".join([f"{m.get('role','')}: {m.get('content','')}" for m in messages[-8:]])
+                recent_context = "\n".join([m.get('role','') + ': ' + m.get('content','') for m in messages[-8:]])
                 explanation, sql_query = generate_sql_for_database(user_prompt, recent_context)
                 
                 st.markdown(f'<span class="source-badge badge-snowflake">📌 Source: {source_label}</span>', unsafe_allow_html=True)
@@ -1261,63 +1027,41 @@ if user_prompt:
                     with st.expander("Generated SQL Query", expanded=False):
                         st.code(sql_query, language="sql")
                     try:
-                        is_safe, validation_error = validate_read_only_sql(sql_query)
-                        if not is_safe:
-                            st.error(f"SQL validation blocked this query: {validation_error}")
-                            response_text = "The generated query was blocked by the SQL safety validator."
-                        else:
-                            # The database itself is the final SQL validator.
-                            # If the first draft fails, regenerate using the
-                            # actual Snowflake error rather than giving up.
-                            execution_error = None
-                            df_result = None
-
-                            for attempt in range(3):
-                                try:
-                                    df_result = session.sql(sql_query).to_pandas()
-                                    execution_error = None
+                        last_error = None
+                        for attempt in range(3):
+                            try:
+                                df_result = session.sql(sql_query).to_pandas()
+                                last_error = None
+                                break
+                            except Exception as exec_error:
+                                last_error = str(exec_error)
+                                if attempt >= 2:
                                     break
-                                except Exception as exc:
-                                    execution_error = str(exc)
-                                    if attempt >= 2:
-                                        break
-
-                                    repaired_sql = _repair_sql_from_database_error(
-                                        user_prompt,
-                                        sql_query,
-                                        execution_error,
-                                        recent_context
-                                    )
-                                    if not repaired_sql:
-                                        break
-
-                                    safe_repair, repair_error = validate_read_only_sql(repaired_sql)
-                                    if not safe_repair:
-                                        execution_error = repair_error
-                                        break
-
-                                    sql_query = repaired_sql
-
-                            if execution_error:
-                                st.error(
-                                    f"Snowflake could not execute the generated query: {execution_error}"
+                                repaired_sql = _repair_sql(
+                                    user_prompt,
+                                    sql_query,
+                                    last_error,
+                                    recent_context
                                 )
-                                response_text = (
-                                    "The question was understood, but Snowflake rejected "
-                                    "the generated SQL after multiple repair attempts."
-                                )
-                            elif df_result is not None and not df_result.empty:
-                                first_val = df_result.iloc[0, -1] if len(df_result.columns) > 0 else None
-                                if pd.isnull(first_val) or (isinstance(first_val, (int, float)) and first_val == 0 and len(df_result) == 1):
-                                    st.info("The query executed, but no matching records were found in the Snowflake Data Mart.")
-                                else:
-                                    tab_data, tab_chart = st.tabs(["Data Table 📄", "Visualization 📈"])
-                                    with tab_data:
-                                        st.dataframe(df_result, use_container_width=True)
-                                    with tab_chart:
-                                        display_chart_tab(df_result, key_prefix=f"live_{current_id}")
+                                if not repaired_sql:
+                                    break
+                                sql_query = repaired_sql
+
+                        if last_error:
+                            raise RuntimeError(last_error)
+
+                        if df_result is not None and not df_result.empty:
+                            first_val = df_result.iloc[0, -1] if len(df_result.columns) > 0 else None
+                            if pd.isnull(first_val) or (isinstance(first_val, (int, float)) and first_val == 0 and len(df_result) == 1):
+                                st.info("The query executed, but no matching records were found in the Snowflake Data Mart.")
                             else:
-                                st.info("No matching records were found in the Snowflake Data Mart.")
+                                tab_data, tab_chart = st.tabs(["Data Table 📄", "Visualization 📈"])
+                                with tab_data:
+                                    st.dataframe(df_result, use_container_width=True)
+                                with tab_chart:
+                                    display_chart_tab(df_result, key_prefix=f"live_{current_id}")
+                        else:
+                            st.info("No matching records were found in the Snowflake Data Mart.")
                     except Exception as e:
                         st.error(f"Query execution error: {str(e)}")
                 else:
